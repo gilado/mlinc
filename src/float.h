@@ -1,5 +1,5 @@
 /* Copyright (c) 2023-2024 Gilad Odinak */
-/* Basic operations for manipulation ifloating point numbers */
+/* Basic operations for manipulation of floating point numbers */
 #ifndef FLOAT_H
 #define FLOAT_H
 
