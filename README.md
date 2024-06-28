@@ -101,6 +101,13 @@ Scripts in the scripts sub-directory fetch publicly available datasets
 for use in test programs. For example:\
 `$ scripts/getirisdata.sh`
 
+### Running the code
+
+In the project roo directory, run these commands:\
+`$ bin/testmodel`\
+`$ bin/har`\
+`$ bin/timit`
+
 ### License
 
 The use of this software is governed by the [LGPL license](LICENSE.md)
