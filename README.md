@@ -103,7 +103,7 @@ for use in test programs. For example:\
 
 ### Running the code
 
-In the project roo directory, run these commands:\
+In the project root directory, run these commands:\
 `$ bin/testmodel`\
 `$ bin/har`\
 `$ bin/timit`
