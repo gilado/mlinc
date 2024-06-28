@@ -1,0 +1,234 @@
+/* Copyright (c) 2023-2024 Gilad Odinak */
+/* Test SVD decomposistion              */
+#include <stdio.h>
+#include <strings.h>
+#include <math.h>
+#include "mem.h"
+#include "random.h"
+#include "array.h"
+#include "arrayio.h"
+#include "svd.h"
+
+float A0[4][4] = {
+    { 0.0 ,  0.0 ,  0.0 ,  2.0},
+    { 0.0 , -6.0 , -4.0 , -8.0 },
+    { 6.0 ,  6.0 ,  2.0 ,  5.0 },
+    { 0.0 ,  0.0 , -4.0 , -2.0 }
+};
+
+float A1[3][4] = {
+    { 1.0 ,  0.0 ,  0.0 ,  2.0},
+    { 0.0 ,  0.0 , -1.0 , -8.0},
+    { 0.0 , -1.0 ,  0.0 ,  5.0}
+};
+
+float A2[2][3] = {
+    { 1.0 ,  2.0 , 3.0},
+    { 4.0 ,  5.0 , 6.0}
+};
+
+float A3[4][3] = {
+    {  6.0 ,  2.0 ,  5.0},
+    {  0.0 , -4.0 , -8.0},
+    { -1.0 ,  0.0 ,  2.0},
+    {  2.0 ,  2.0 ,  7.0}
+};
+
+float A4[4][4] = {
+    {  6.0 ,  2.0 ,  5.0, 0.0},
+    {  0.0 , -4.0 , -8.0, 0.0},
+    { -1.0 ,  0.0 ,  2.0, 0.0},
+    {  2.0 ,  2.0 ,  7.0, 0.0}
+};
+
+
+int is_close(fArr2D A_, fArr2D R_, int m, int n, float tol)
+{
+    int ok = 1;
+    typedef float (*ArrMN)[n];
+    ArrMN A = (ArrMN) A_;
+    ArrMN R = (ArrMN) R_;
+    
+    for (int i = 0; i < m; i++)
+        for (int j = 0; j < n; j++)
+            if (fabsf(fabsf(R[i][j]) - fabsf(A[i][j])) > tol)
+                ok = 0;
+    return ok;
+}
+
+/* Checks whether A is orthogonal. If it is returns 1; otherwise, returns 0.
+ * Calculates the elements of A.T @ T and compares to the corresponding
+ * value of and identity matrix of same dimensions.
+ */
+int is_orthogonal(fArr2D A_, int n, float tol)
+{
+    typedef float (*ArrNN)[n];
+    ArrNN A = (ArrNN) A_;
+
+    for (int i = 0; i < n; i++) {
+        for (int j = 0; j < n; j++) {
+            float s = 0.0;
+            for (int k = 0; k < n; k++)
+                s += A[k][i] * A[k][j];
+            if (i == j && fabsf(s - ((float)1.0)) > tol)
+                return 0; /* Diagonal elements should be close to 1 */
+            if (i != j && fabsf(s) > tol)
+                return 0; /* Off-diagonal elements should be close to 0 */
+        }
+    }
+    return 1;
+}
+
+int svd_test(fArr2D A, int m, int n, int quiet, int precision, int index)
+{
+    typedef float (*VecN);
+    typedef float (*VecM);
+    typedef float (*ArrNN)[n];
+    typedef float (*ArrMN)[n];
+    typedef float (*ArrMM)[m];
+
+    float tol = 1 / pow(10,(precision-1));
+    int dec, pos, ortho, ok;
+    int i;
+    char name[16];
+    char format[16];
+    snprintf(format,sizeof(format),"%%%d.%df",3+precision,precision);
+
+    if (!quiet) {
+        snprintf(name,sizeof(name),"A%d",index);
+        print_array(A,m,n,name,format,0);
+    }
+
+    /* R = U @ diag(S) @ Vt           */
+    ArrMN R = allocmem(m,n,float);
+    
+    if (m >= n) {
+        /* results of tall array svd */
+        ArrMN U_t = allocmem(m,n,float);
+        VecN S_t = allocmem(1,n,float);
+        ArrNN Vt_t = allocmem(n,n,float);
+        /* intermediate tall calculations */
+        ArrNN DS_t = allocmem(n,n,float); /* diag(S)      */
+        ArrMN US_t = allocmem(m,n,float); /* U @ diag(S)  */
+        
+        SVD(A,U_t,S_t,Vt_t,m,n);
+        if (!quiet) {
+            snprintf(name,sizeof(name),"U%d",index);
+            print_array(U_t,m,n,name,format,0);
+            snprintf(name,sizeof(name),"S%d",index);
+            print_array((fArr2D)S_t,1,n,name,format,0);
+            snprintf(name,sizeof(name),"Vt%d",index);
+            print_array(Vt_t,n,n,name,format,0);
+        }
+        diagmat(S_t,DS_t,n);
+        matmul(US_t,U_t,DS_t,m,n,n);
+        matmul(R,US_t,Vt_t,m,n,n);
+
+        pos = 1;
+        for (i = 0; i < n - 1; i++)
+            if (S_t[i] < 0.0)
+                pos = 0;
+        dec = 1;
+        for (i = 1; i < n - 1; i++)
+            if (S_t[i - 1] < S_t[i])
+                dec = 0;
+        /* Only check Vt, since if S is ok and Vt is ok and A == R, U must be ok */
+        ortho = is_orthogonal(Vt_t,n,tol);
+
+        freemem(U_t);
+        freemem(S_t);
+        freemem(Vt_t);
+        freemem(DS_t);
+        freemem(US_t);
+    }
+    else {
+        /* results of wide array svd */
+        VecM S_w = allocmem(1,m,float);
+        ArrMM U_w = allocmem(m,m,float);
+        ArrMN Vt_w = allocmem(m,n,float);
+        /* intermediate wide calculations */
+        ArrMM DS_w = allocmem(m,m,float); /* diag(S)      */
+        ArrMM US_w = allocmem(m,m,float); /* U @ diag(S)  */
+        
+        SVD(A,U_w,S_w,Vt_w,m,n);
+        if (!quiet) {
+            snprintf(name,sizeof(name),"U%d",index);
+            print_array(U_w,m,m,name,format,0);
+            snprintf(name,sizeof(name),"S%d",index);
+            print_array((fArr2D)S_w,1,m,name,format,0);
+            snprintf(name,sizeof(name),"Vt%d",index);
+            print_array(Vt_w,m,n,name,format,0);
+        }
+        diagmat(S_w,DS_w,m);
+        matmul(US_w,U_w,DS_w,m,m,m);
+        matmul(R,US_w,Vt_w,m,m,n);
+
+        pos = 1;
+        for (i = 0; i < m - 1; i++)
+            if (S_w[i] < 0.0)
+                pos = 0;
+        dec = 1;
+        for (i = 1; i < m - 1; i++)
+            if (S_w[i - 1] < S_w[i])
+                dec = 0;
+        /* Only check U, since if S is ok and U is ok and A == R, Vt must be ok */
+        ortho = is_orthogonal(U_w,m,tol);
+
+        freemem(S_w);
+        freemem(U_w);
+        freemem(Vt_w);
+        freemem(DS_w);
+        freemem(US_w);
+    }
+    if (!quiet) {
+        snprintf(name,sizeof(name),"R%d",index);
+        print_array(R,m,n,name,format,0);
+    }
+    ok = is_close(A,R,m,n,tol);
+    if (!ok)
+        printf("Original matrix A%d and reconstructed matrix R are not close\n",index);
+    if (!dec)
+        printf("Vector S%d elements are not in decreasing order (m %d, n %d)\n",index,m,n);
+    if (!pos)
+        printf("Vector S%d elements are not all non-negative\n",index);
+    if (!ortho)
+        printf("Matrix %s%d is not orthogonal\n",(m>=n)?"Vt":"U",index);
+
+    freemem(R);
+    return ok && dec && pos & ortho;
+}
+
+int full_test(int min_dim, int max_dim, int num_tests, int quiet, int precision)
+{
+    int pass = 1;
+
+    for (int i = 0; i < num_tests; i++) {
+        int m = urand(min_dim,max_dim);
+        int n = urand(min_dim,max_dim);
+        printf("running test %d A[%d][%d]   \r",i,m,n);
+        fflush(stdout);
+        {
+            float A[m][n];
+            for (int j = 0; j < m; j++)
+                for (int k = 0; k < n; k++)
+                    A[j][k] = nrand(0,1) * 9.0;
+            int ok = svd_test(A,m,n,quiet,precision,i);
+            if (!ok)
+                pass = 0;
+        }
+    }
+    printf("                                 \r");
+    fflush(stdout);
+    return pass;
+}
+
+int main()
+{
+    printf("smoke test 4 x 4 %s\n",svd_test(A0,4,4,1,5,0) ? "ok" : "failed");
+    printf("smoke test 3 x 4 %s\n",svd_test(A1,3,4,1,5,1) ? "ok" : "failed");
+    printf("smoke test 2 x 3 %s\n",svd_test(A2,2,3,1,5,2) ? "ok" : "failed");
+    printf("smoke test 4 x 3 %s\n",svd_test(A3,4,3,1,5,3) ? "ok" : "failed");
+    printf("smoke test 4 x 4 %s\n",svd_test(A4,4,4,1,5,4) ? "ok" : "failed");
+    printf("full test %s\n",full_test(2,512,100,1,4) ? "ok" : "failed");
+    return 0;
+}
