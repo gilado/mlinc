@@ -55,10 +55,10 @@ actual number of rows and columns is passed as separate parameters. For
 better readability, the code makes extensive use of typedefs and casts
 so that inside a function the array elements are accessed in a natural
 way, i.e., as row and column subscripts, for eample A\[1\]\[2\]. See
-[array.h](/ML/mlinc/src/numeric/array.h), for more details.\
+[array.h](src/numeric/array.h), for more details.\
 \
 The code generally uses heap memory to prevent stack overflow when
-dealing with large arrays. The [allocmem()](/ML/mlinc/src/mem.h) macro
+dealing with large arrays. The [allocmem()](src/mem.h) macro
 ensures that the allocated memory is properly initialized to all zeros;
 if not enough memory is available, it prints an error message and
 termintes the program.\
@@ -73,7 +73,7 @@ simplifying matrix operations.
 
 ### Browsing the code
 
-A good starting point is [testmodel.c](/ML/mlinc/src/tests/testmodel.c),
+A good starting point is [testmodel.c](src/tests/testmodel.c),
 which is a program that tests different Neural Network models against
 simple test cases. This program provides a good idea on how models are
 constructed, trained and used to make predictions.
