@@ -2,6 +2,7 @@
 /* Data preparation for model training  */
 #include <stdio.h>
 #include "mem.h"
+#include "float.h"
 #include "random.h"
 #include "batch.h"
 

@@ -256,7 +256,7 @@ int har_lstm_dense_classification(const char* loadmodel, const char* storemodel,
     printf("\nTrains a multi layer LSTM followed by Dense layer to predict the\n");
     printf("classes of samples from the Human Activity Recordings dataset\n\n");
     printf("Run 'har -h' to list program options\n\n");
-    printf("Training with default parameters may take up to 30 minutes\n\n");
+    printf("Training with default parameters may take  a few minutes\n\n");
     const int L = layers_cnt + 1;    /* Number of layers        */
     const int B = batch_size;        /* Train batch size        */
     const int Dr = HAR_FEAT_CNT;     /* Raw data dimension      */
@@ -343,10 +343,9 @@ int har_lstm_dense_classification(const char* loadmodel, const char* storemodel,
         printf("Training...");
         model_fit(m,xTr,yTrv,sTr,STr,
                     xTe,yTev,sTe,STe,
-                    1,epochs,
-                    learning_rate,weight_decay,
+                    epochs,learning_rate,weight_decay,
                     losses,accuracies,v_losses,v_accuracies,
-                    0,2);
+                    "verbose=2");
     }
 
     if (storemodel != NULL) 

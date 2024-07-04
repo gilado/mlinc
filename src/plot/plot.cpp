@@ -33,10 +33,17 @@ namespace plt = matplotlibcpp;
  *   v_accuracies  - Array of validation accuracies.
  *   title         - Title of the plot.
  */
+#ifdef USE_DOUBLE
+extern "C" 
+void plot_graph(double* x_, double* yp_, double* yt_, int len, 
+                int nepochs, double* losses_, double* accuracies_, 
+                double* v_losses_, double* v_accuracies_, const char* title) 
+#else
 extern "C" 
 void plot_graph(float* x_, float* yp_, float* yt_, int len, 
                 int nepochs, float* losses_, float* accuracies_, 
                 float* v_losses_, float* v_accuracies_, const char* title) 
+#endif
 {
     signal(SIGINT, ctrlc); /* matplotcpp hijacks this */
     printf("Plotting results - close plot window to continue\n");
@@ -110,11 +117,19 @@ void plot_graph(float* x_, float* yp_, float* yt_, int len,
  *   mode          - Display mode for confusion matrix cells ('numbers',
  *                   'circles', 'both').
  */
+#ifdef USE_DOUBLE
+extern "C"
+void plot_cm(const int* cm_/*[nc][nc]*/, int nc, const char** clsnames/*[nc]*/,
+             int nepochs, double* losses_, double* accuracies_, 
+             double* v_losses_, double* v_accuracies_,
+             const char* title, const char* mode)
+#else
 extern "C"
 void plot_cm(const int* cm_/*[nc][nc]*/, int nc, const char** clsnames/*[nc]*/,
              int nepochs, float* losses_, float* accuracies_, 
              float* v_losses_, float* v_accuracies_,
              const char* title, const char* mode)
+#endif
 {
     int txt = !strcasecmp(mode,"numbers") || !strcasecmp(mode,"both");
     int gfx = !strcasecmp(mode,"circles") || !strcasecmp(mode,"both");
@@ -219,10 +234,17 @@ void plot_cm(const int* cm_/*[nc][nc]*/, int nc, const char** clsnames/*[nc]*/,
  *   point_size    - Size of the points in the plot.
  *   title         - Title of the plot.
  */
+#ifdef USE_DOUBLE
+extern "C" 
+void plot_pca(double x[][2], int* y, int len, 
+              int n_classes, const char** class_names, 
+              float point_size, const char* title)
+#else
 extern "C" 
 void plot_pca(float x[][2], int* y, int len, 
               int n_classes, const char** class_names, 
               float point_size, const char* title)
+#endif
 {
     signal(SIGINT, ctrlc); /* matplotcpp hijacks this */
     printf("Plotting results - close plot window to continue\n");

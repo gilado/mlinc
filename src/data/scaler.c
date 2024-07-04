@@ -2,6 +2,7 @@
 /* Scaling and normalization functions */
 #include <math.h>
 #include "mem.h"
+#include "float.h"
 #include "array.h"
 #include "scaler.h"
 

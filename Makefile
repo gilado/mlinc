@@ -37,7 +37,7 @@ INC_DIRS = -I$(SRC_DIR) -I$(NUM_DIR) -I$(DECOMP_DIR) -I$(STATS_DIR)  \
            
 LIB_DIRS =
 
-PROGRAMS = sph2wav feat2audio word2vec har timitfeat timit
+PROGRAMS = sph2wav feat2audio word2vec har timitfeat timit timittest
 TESTS = testhann testfilter testlpc testlsp testw2v \
 		testmem testarray testrandom testqr testsvd testpca \
 		testadamw testctc testdense testlstm testmodel 
@@ -49,10 +49,6 @@ OBJS = $(filter-out $(BUILD_DIR)/prog/%.o,$(filter-out \
                                               $(BUILD_DIR)/tests/%.o,$(AOBJS)))
 
 include Environ.mk # OS and processor depndencies
-
-ifneq ($(USEDOUBLE),) # USEDOUBLE is not blank - use double precision math
-NOPLOT := Yes         # plotting not compatible with double precision math
-endif
 
 ifeq ($(NOPLOT),)
 include Plot.mk   # plotting (matlibplot for C++) support, if available

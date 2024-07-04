@@ -9,6 +9,125 @@
 #include "delta.h"
 #include "featfile.h"
 
+/* Reads speech samples from speech feature file.
+ *
+ * The file contains a sequence of phonemes, one phoneme per text line.
+ * Each phoneme is represented by a number of vectors (aka frames) and 
+ * each frame consists of a vector of real numbers; all the vectors of
+ * a phoneme have the same label, the phonme's name.
+ *
+ * The feature vectors read from the files are expanded to include
+ * deltas and delta-deltas of their values.
+ *
+ * Parameters
+ *   fp   - A pointer to a feature file open for read.
+ *   maxs - The maximum number of samples (number of rows in x,
+ *          and number of elements in yc)
+ *   
+ * Returns:
+ *   An array of feature vectors in x, their corresponding labels in yc.
+ *   
+ *   This function returns the actual number of samples.
+ *   That also is the returned number of rows in x, elements in yc.
+ *   Returns 0 if an error occured.
+ *
+ * Notes:
+ *   The set of phonemes can be CMU 39 phonemes, or TIMIT 61 phonemes.
+ *   In the later case TIMIT phonemes are mapped to their CMU equivalents.
+ *   Reference: Speaker-Independent Phone Recognition, Lee and Hon 1989
+ */
+int read_feature_file(FILE* fp, int maxs, 
+                      float x[][EXPENDED_FEAT_CNT], int yc[])
+{
+    int lineno = 0;
+    int vecinx = 0;
+    int seqlen = 0;
+    while (vecinx < maxs) {
+        char buf[20000];
+        char* line = fgets(buf,sizeof(buf),fp);
+        if (line == NULL) /* End of file */
+            break;
+        lineno++;
+        int len = strlen(line);
+        if (len == 0 || line[len - 1] != '\n') {
+            fprintf(stderr,"Line %d too long or malformed\n",lineno);
+            return 0;
+        }
+        /* Remove all whitespace in current line */
+        len = 0;
+        for (int i = 0; line[i] != '\0'; i++)
+            if (!isspace(line[i]))
+                line[len++] = line[i];
+        line[len] = '\0';
+        const char* header = "phoneme,"; /* Header line starts with this */
+        if (strncmp(line,header,strlen(header)) == 0) /* Header */
+            continue;
+        /* Replace commas with spaces */
+        for (int i = 0; line[i] != '\0'; i++)
+            if (line[i] == ',')
+                line[i] = ' ';
+        /* Read the first 7 fields */
+        const char* fmt = "%4s %d " FMTF " " FMTF " %255s %d %d";
+        char ph[5];
+        int label;
+        float stime,etime;
+        char fn[256];
+        int fcnt, nfrm;             
+        int cnt = sscanf(line,fmt,ph,&label,&stime,&etime,fn,&fcnt,&nfrm);
+        if (cnt < 7) {
+            fprintf(stderr,"Line %d is malformed\n",lineno);
+            return 0;
+        }
+        if (fcnt != FEAT_CNT) {
+            fprintf(stderr,"In line %d: feature count (fcnt) is %d, "
+                                        "should be %d\n",lineno,fcnt,FEAT_CNT);
+            return 0;
+        }
+        if (nfrm == 0) /* Line has no features */
+            continue;
+        /* Advance line to space past last scanned value */
+        while (cnt > 0 && *line != '\0')
+            if (*line++ == ' ')
+                cnt--;
+        /* Read all vectors of current phoneme */
+        for (int i = 0; i < nfrm; i++) {
+            for (int j = 0; j < FEAT_CNT; j++) {
+                char* end = line;
+                float feat;
+                feat = strtof(line,&end);
+                if (line == end) {
+                    fprintf(stderr,"In line %d: malformed feature #%d\n",
+                                                      lineno,i * FEAT_CNT + j);
+                    return 0;
+                 }
+                 x[vecinx][j] = feat; 
+                 line = end;
+            }
+            (void) timit_phoneme_names; /* Acquiesce the complier */
+            (void) reduced_phoneme_names;
+            yc[vecinx] = timit2reduced[label]; /* TIMIT -> CMT    */
+            if (i == nfrm - 1)          /* Last vector of phoneme */
+                yc[vecinx] += EOP;      /* Mark as end of phoneme */
+            vecinx++;
+            if (vecinx >= maxs) {
+                fprintf(stderr,"In line %d: reached %d samples, "
+                                            "ignoring the rest\n",lineno,maxs);
+                break;
+             }
+        }
+        seqlen += nfrm;
+    }
+    /* Expand features */
+    int M = seqlen;
+    int N = EXPENDED_FEAT_CNT;
+    calculate_deltas(x[vecinx - M],M,N,0,14,14,3);  /* deltas       */
+    calculate_deltas(x[vecinx - M],M,N,14,28,14,3); /* delta-deltas */
+    calculate_deltas(x[vecinx - M],M,N,0,14,42,5);  /* deltas       */
+    calculate_deltas(x[vecinx - M],M,N,42,56,14,5); /* delta-deltas */
+    return seqlen;
+}
+
+
 /* Reads speech samples from speech feature files.
  *
  * Each file contains a sequence of phonemes, one phoneme per text line.
@@ -47,12 +166,9 @@ int read_feature_files(const char* input_dir, const char* file_list,
                        int max_sequences, int *seq_length,
                        int max_samples, float x[][EXPENDED_FEAT_CNT], int yc[])
 {
-    (void) timit_phoneme_names;  /* Acquiesce the complier */
-    (void) reduced_phoneme_names;
-
     const int maxpath = 512;
     char buffer[3 * maxpath];
-    if (strlen(input_dir) >= maxpath) {
+    if ((int) strlen(input_dir) >= maxpath) {
         fprintf(stderr,"Directory name too long: '%s'\n",input_dir);
         return 0;
     }
@@ -88,115 +204,14 @@ int read_feature_files(const char* input_dir, const char* file_list,
         FILE* fp = fopen(filepath,"rb");
         if (fp == NULL) {
             fprintf(stderr,"Failed to open file '%s' (%d) for read - "
-                    "skipping file\n",filepath,fileno);
+                                            "skipping file\n",filepath,fileno);
             continue;
         }
-        seq_length[seqinx] = 0;
-        int lineno = 0;
-        /* Iterate over all lines in current file */
-        while (vecinx < max_samples) {
-            char buf[20000];
-            char* line = fgets(buf,sizeof(buf),fp);
-            if (line == NULL) { /* End of file */
-                fclose(fp);
-                break;
-            }
-            lineno++;
-            int len = strlen(line);
-            if (len == 0 || line[len - 1] != '\n') {
-                fprintf(stderr,"In file '%s' line %d: line too long "
-                        "or malformed\n",filepath,lineno);
-                fclose(fp);
-                fclose(lfp);
-                return 0;
-            }
-            /* Remove all whitespace in current line */
-            len = 0;
-            for (int i = 0; line[i] != '\0'; i++)
-                if (!isspace(line[i]))
-                    line[len++] = line[i];
-            line[len] = '\0';
-            const char* header = "phoneme,"; /* Header line starts with this */
-            if (strncmp(line,header,strlen(header)) == 0) /* Header */
-                continue;
-            /* Replace commas with spaces */
-            for (int i = 0; line[i] != '\0'; i++)
-                if (line[i] == ',')
-                    line[i] = ' ';
-            /* Read the first 7 fields */
-            const char* fmt = "%4s %d %f %f %255s %d %d";
-            char ph[5];
-            int label;
-            float stime,etime;
-            char fn[256];
-            int fcnt, nfrm;             
-            int cnt = sscanf(line,fmt,ph,&label,&stime,&etime,fn,&fcnt,&nfrm);
-            if (cnt < 7) {
-                fprintf(stderr,
-                        "In file '%s' line %d: malformed line\n",
-                        filepath,lineno);
-                fclose(fp);
-                fclose(lfp);
-                return 0;
-            }
-            if (fcnt != TIMIT_FEAT_CNT) {
-                fprintf(stderr,
-                        "In file '%s' line %d: fcnt is %d, should be %d\n",
-                        filepath,lineno,fcnt,TIMIT_FEAT_CNT);
-                fclose(fp);
-                fclose(lfp);
-                return 0;
-            }
-            if (nfrm == 0) /* Line has no features */
-                continue;
-            /* Advance line to space past last scanned value */
-            while (cnt > 0 && *line != '\0')
-                if (*line++ == ' ')
-                    cnt--;
-            /* Read all vectors of current phoneme */
-            for (int i = 0; i < nfrm; i++) {
-                for (int j = 0; j < TIMIT_FEAT_CNT; j++) {
-                    char* end = line;
-                    float feat;
-                    feat = strtof(line,&end);
-                    if (line == end) {
-                        fprintf(stderr,
-                            "In file '%s' line %d: malformed feature #%d\n",
-                            filepath,lineno,i * TIMIT_FEAT_CNT + j);
-                        fclose(fp);
-                        fclose(lfp);
-                        return 0;
-                     }
-                     x[vecinx][j] = feat; 
-                     line = end;
-                }
-                yc[vecinx] = timit2reduced[label];
-                if (i == nfrm - 1)      /* Last frame of phoneme  */
-                    yc[vecinx] += EOP;  /* Mark as end of phoneme */
-                vecinx++;
-                if (vecinx >= max_samples) {
-                    fprintf(stderr,
-                            "In file '%s' line %d: reached %d samples, "
-                            "ignoring the rest\n",filepath,lineno,max_samples);
-                    fclose(fp);
-                    break;
-                 }
-            }
-            seq_length[seqinx] += nfrm;
-        }
-        int M = seq_length[seqinx];
-        int N = EXPENDED_FEAT_CNT;
-        calculate_deltas(x[vecinx - M],M,N,0,14,14,3);  /* deltas       */
-        calculate_deltas(x[vecinx - M],M,N,14,28,14,3); /* delta-deltas */
-        calculate_deltas(x[vecinx - M],M,N,0,14,42,5);  /* deltas       */
-        calculate_deltas(x[vecinx - M],M,N,42,56,14,5); /* delta-deltas */
-        seqinx++;
-        if (seqinx >= max_sequences) {
-            fprintf(stderr,
-                    "In file '%s' line %d: reached %d sequences, "
-                    "ignoring the rest\n",filepath,lineno,max_sequences);
-            break;
-         }
+        int veccnt = read_feature_file(fp,max_samples - vecinx, 
+                                                       x + vecinx,yc + vecinx);
+        fclose(fp);
+        seq_length[seqinx++] = veccnt;
+        vecinx += veccnt;
     }
     fclose(lfp);
     return seqinx;

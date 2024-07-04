@@ -39,6 +39,40 @@ int test_matmul()
     return (ok < 1e-9);
 }
 
+int test_matmulT()
+{
+    float r[N][M];
+    float x[N][D] = {
+        {3.0, 6.0},
+        {5.0, 4.0},
+        {7.0, 2.0}
+    };
+    float y[M][D] = {
+        { 9.0, 13.0},
+        {10.0, 14.0},
+        {11.0, 15.0},
+        {12.0, 16.0}
+        
+    };
+    float rr[N][M] = {
+        {105.0, 114.0, 123.0, 132.0},
+        { 97.0, 106.0, 115.0, 124.0},
+        { 89.0,  98.0, 107.0, 116.0}
+    };
+
+    const fArr2D r_ = (const fArr2D) r;
+    const fArr2D x_ = (const fArr2D) x;
+    const fArr2D y_ = (const fArr2D) y;
+    
+    /* r = x @ y.T */ 
+    matmulT(r_,x_,y_,N,D,M);
+    float ok = 0.0;
+    for (int i = 0; i < N; i++)
+        for (int j = 0; j < M; j++)
+            ok += fabsf(rr[i][j] - r[i][j]);
+    return (ok < 1e-9);
+}
+
 int test_addvecmatmul() 
 {
     float r[N] = {1.0, 2.0, 3.0};
@@ -125,6 +159,7 @@ int test_addoutermul()
 int main()
 {
     printf("matmul() test %s\n",test_matmul() ? "ok" : "failed");
+    printf("matmulT() test %s\n",test_matmulT() ? "ok" : "failed");
     printf("addvecmatmul() test %s\n",test_addvecmatmul() ? "ok" : "failed");
     printf("addoutermul() test %s\n",test_addoutermul() ? "ok" : "failed");
     printf("addinnermul() test %s\n",test_addinnermul() ? "ok" : "failed");

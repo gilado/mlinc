@@ -1,9 +1,10 @@
 /* Copyright (c) 2023-2024 Gilad Odinak */
-/* Basic operations for manipulation of floating point numbers */
+/* Basic operations for manipulation ifloating point numbers */
 #ifndef FLOAT_H
 #define FLOAT_H
 
 #ifdef USE_DOUBLE
+#define float   double
 #define fabsf   fabs
 #define logf    log
 #define log10f  log10

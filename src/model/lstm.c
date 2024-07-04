@@ -11,7 +11,7 @@
 #include "mem.h"
 #include "random.h"
 #include "array.h"
-#include "qr.h"
+#include "svd.h"
 #include "lstm.h"
 
 /* Creates a long short term memory (LSTM) neural network.
@@ -113,10 +113,11 @@ void lstm_init(LSTM* l, int input_dim, int batch_size)
     for (int i = 0; i < l->S; i++)
         for (int j = 0; j < l->S; j++)
             Uo[i][j] = urand(-scale,scale);
-    QR(Uf,NULL,NULL,l->S,l->S);
-    QR(Ui,NULL,NULL,l->S,l->S);
-    QR(Uc,NULL,NULL,l->S,l->S);
-    QR(Uo,NULL,NULL,l->S,l->S);
+    /* SVD faster than QR with equivalent output */
+    SVD(Uf,NULL,NULL,NULL,l->S,l->S);
+    SVD(Ui,NULL,NULL,NULL,l->S,l->S);
+    SVD(Uc,NULL,NULL,NULL,l->S,l->S);
+    SVD(Uo,NULL,NULL,NULL,l->S,l->S);
 }
 
 /* Sets a new batch size.

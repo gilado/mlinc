@@ -2,6 +2,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <math.h>
+#include "float.h"
 #include "filter.h"
 
 #ifndef M_PI

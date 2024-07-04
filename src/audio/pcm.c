@@ -1,5 +1,6 @@
 /* Copyright (c) 2023-2024 Gilad Odinak */
 #include <stdint.h>
+#include "float.h"
 #include "pcm.h"
 
 void pcm2flt(const int16_t* pcmData, float* floatData, int numSamples)

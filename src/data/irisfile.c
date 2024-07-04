@@ -3,6 +3,7 @@
 /* https://archive.ics.uci.edu/dataset/53/iris */
 #include <stdio.h>
 #include <string.h>
+#include "float.h"
 #include "irisfile.h"
 
 const char* iris_class_names[IRIS_CLASS_CNT] = { 
@@ -27,7 +28,7 @@ int read_iris_file(const char* irisfile, int numSamples,
             return 0;
         }
         char cname[16];
-        int cnt = sscanf(line,"%f,%f,%f,%f,%15s",
+        int cnt = sscanf(line,FMTF "," FMTF "," FMTF "," FMTF ",%15s",
                          &x[i][0],&x[i][1],&x[i][2],&x[i][3],cname);
         if (cnt < 5) {
             fprintf(stderr,"%s: at line %d: "

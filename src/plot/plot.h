@@ -1,3 +1,6 @@
+/* Copyright (c) 2023-2024 Gilad Odinak */
+
+#include "float.h"
 /* plot_graph: Plots a graph of predictions and true values over epochs.
  * 
  * Displays up to three graphs: x vs y, training and validation lossses,

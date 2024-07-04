@@ -7,6 +7,7 @@
 #include <strings.h>
 #include <ctype.h>
 #include "mem.h"
+#include "float.h"
 #include "array.h"
 #include "sphere.h"
 #include "timitfile.h"

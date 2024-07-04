@@ -1,5 +1,9 @@
 /* Copyright (c) 2023-2024 Gilad Odinak */
+#ifndef SPHERE_H
+#define SPHERE_H
+
 #include <stdint.h>
+#include "float.h"
 
 typedef struct sphfile_t {
     FILE *fileHandle;
@@ -19,3 +23,5 @@ SPHFILE* closeSphereFile(SPHFILE* sf);
 size_t readSphereFile(SPHFILE* sf, void *buffer, size_t numSamples);
 size_t seekSphereFile(SPHFILE* sf, size_t offsetSamples);
 size_t readSphereAudio(SPHFILE* sf, float *fltBuf, size_t numSamples);
+
+#endif

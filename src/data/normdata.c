@@ -2,6 +2,7 @@
 #include <math.h>
 
 #include "mem.h"
+#include "float.h"
 #include "array.h"
 
 /* Calculates element wise mean and standard deviation for all feature vectors

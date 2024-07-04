@@ -2,6 +2,7 @@
 /* Functions to load and store NN dense layer */
 #include <stdio.h>
 #include "mem.h"
+#include "float.h"
 #include "array.h"
 #include "arrayio.h"
 #include "dense.h"

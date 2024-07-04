@@ -2,6 +2,7 @@
 /* Time measurment functions            */
 #ifndef ETIME_H
 #define ETIME_H
+#include "float.h"
 
 extern float current_time();
 

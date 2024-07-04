@@ -1,4 +1,9 @@
 /* Copyright (c) 2023-2024 Gilad Odinak */
+#ifndef FILTER_H
+#define FILTER_H
+
+#include "float.h"
+
 #define MAX_FILTER_ORDER 4
 typedef struct {
     int order;        // 1 to 4
@@ -16,3 +21,5 @@ int initFilter(FILTER* restrict  filter,
 
 void runFiler(FILTER* restrict filter, 
               const float *inSamples, float *outSamples, int numSamples);
+
+#endif

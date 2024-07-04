@@ -4,6 +4,7 @@
 #include <stdint.h>
 #include <string.h>
 #include <strings.h>
+#include "float.h"
 #include "sphere.h"
 #include "ulaw.h"
 #include "pcm.h"

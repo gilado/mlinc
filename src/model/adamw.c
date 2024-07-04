@@ -58,7 +58,7 @@ void adamw_update(fArr2D w_/*[M][N]*/,fArr2D g_/*[M][N]*/,
     ArrMN m = (ArrMN) m_;
     ArrMN v = (ArrMN) v_;
     
-    clip_gradients(g,M,N,1.0e-12,10.0);
+    clip_gradients(g,M,N,1.0e-13,10.0);
 
     for (int i = 0; i < M; i++) {
         for (int j = 0; j < N; j++) {

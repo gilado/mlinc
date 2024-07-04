@@ -3,7 +3,7 @@
 #ifndef FEATFILE_H
 #define FEATFILE_H
 
-#define TIMIT_FEAT_CNT      14
+#define FEAT_CNT            14
 #define EXPENDED_FEAT_CNT   70
 
 #define TIMIT_PHONEME_CNT   64
@@ -49,6 +49,36 @@ extern const int timit2reduced[TIMIT_PHONEME_CNT] /* = {
    36,  w->w       36,  wh->w      37,  y->y       38,  z->z  
    30,  zh->sh      0,  pau->sil    0,  epi->sil    0  h#->sil
 }*/;
+
+/* Reads speech samples from speech feature file.
+ *
+ * The file contains a sequence of phonemes, one phoneme per text line.
+ * Each phoneme is represented by a number of vectors (aka frames) and 
+ * each frame consists of a vector of real numbers; all the vectors of
+ * a phoneme have the same label, the phonme's name.
+ *
+ * The feature vectors read from the files are expanded to include
+ * deltas and delta-deltas of their values.
+ *
+ * Parameters
+ *   fp   - A pointer to a feature file open for read.
+ *   maxs - The maximum number of samples (number of rows in x,
+ *          and number of elements in yc)
+ *   
+ * Returns:
+ *   An array of feature vectors in x, their corresponding labels in yc.
+ *   
+ *   This function returns the actual number of samples.
+ *   That also is the returned number of rows in x, elements in yc.
+ *   Returns 0 if an error occured.
+ *
+ * Notes:
+ *   The set of phonemes can be CMU 39 phonemes, or TIMIT 61 phonemes.
+ *   In the later case TIMIT phonemes are mapped to their CMU equivalents.
+ *   Reference: Speaker-Independent Phone Recognition, Lee and Hon 1989
+ */
+int read_feature_file(FILE* fp, int maxs, 
+                      float x[][EXPENDED_FEAT_CNT], int yc[]);
 
 /* Reads speech samples from speech feature files.
  *

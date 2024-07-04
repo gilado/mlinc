@@ -2,6 +2,7 @@
 /* Functions to load and store arrays   */
 #include <stdio.h>
 #include "mem.h"
+#include "float.h"
 #include "array.h"
 #include "arrayio.h"
 
@@ -25,10 +26,10 @@ int read_array(fArr2D a_, int M, int N, FILE* fp, int exc_last)
     typedef float (*ArrMN)[N];
     ArrMN a = (ArrMN) a_;
     int tot = 0, cnt = 0;
-    double value;
+    float value;
     for (int i = 0; i < M; i++) {
         for (int j = 0; j < N; j++, tot++) {
-            cnt = fscanf(fp,"%lg",&value);
+            cnt = fscanf(fp,FMTF,&value);
             if (cnt == EOF || cnt <= 0) {
                 fprintf(stderr,"In read_array: failed to read value at row %d, col %d\n",i,j);
                 break;
@@ -36,7 +37,7 @@ int read_array(fArr2D a_, int M, int N, FILE* fp, int exc_last)
             a[i][j] = value;
         }
         if (cnt > 0 && exc_last) {
-            cnt = fscanf(fp,"%lg",&value);
+            cnt = fscanf(fp,FMTF,&value);
             if (cnt == EOF || cnt <= 0) {
                 fprintf(stderr,"In read_array: failed to read (and discard) value at row %d, past col %d\n",i,N);
                 break;

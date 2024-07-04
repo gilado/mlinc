@@ -10,15 +10,14 @@
 #include <strings.h>
 #include <math.h>
 #include <assert.h>
-#include "model.h"
-#include "sample.h"
+#include "random.h"
 #include "sphere.h"
-#include "timitphn.h"
 #include "filter.h"
 #include "zcr.h"
 #include "hann.h"
 #include "lpc.h"
 #include "lsp.h"
+#include "featfile.h"
 
 /* Audio is divided into frames. For each frame compute LPC parameters,
  * and the residual error variance. Convert the LPC's to LSP's and the 
@@ -37,10 +36,26 @@
 #define LPCORDER (FRAMEFEATCNT - 2) /* preceeded by zcr and sigma    */
 
 #ifndef __APPLE__
-static_assert(FRAMEFEATCNT == FRAME_SIZE);
-static_assert(MAXSEGMENT == MAX_FRAMES);
 static_assert (LPCORDER % 2 == 0);  /* LPC order must be even number */
 #endif
+
+#define NUMPHN 64
+#define SIZEPHN 8
+typedef struct phninfo_t {
+    uint32_t startPos; // in samples
+    uint32_t endPos;
+    char phoneme[SIZEPHN];
+    int label;
+} PHNINFO;
+
+typedef struct phnfile_t {
+    FILE *fileHandle;
+    char mode;         // 'r'
+} PHNFILE;
+
+PHNFILE* openPhonemeFile(const char* filename, char *mode, PHNFILE* pf);
+PHNFILE* closePhonemeFile(PHNFILE* pf);
+size_t readPhonemeFile(PHNFILE* pf, size_t cnt, PHNINFO *phninfo);
 
 /* These variables hold data per processed file */
 #define FRAMEARRSIZE ((MAXFILELEN * 1000) / FRAMETIME)
@@ -86,14 +101,15 @@ int main(int argc, char **argv)
     char *featdir = argv[3];
     const int maxpath = 512;
     char buffer[3 * maxpath];
-    if (strlen(timitdir) >= maxpath) {
+    if ((int) strlen(timitdir) >= maxpath) {
         fprintf(stderr,"Directory name too long: '%s'\n",timitdir);
         return 0;
     }
-    if (strlen(featdir) >= maxpath) {
+    if ((int) strlen(featdir) >= maxpath) {
         fprintf(stderr,"Directory name too long: '%s'\n",featdir);
         return 0;
     }
+    init_lrng(42);
     int fileno;
     for (fileno = 0;; fileno++) { /* Process one audio, phoneme file pair */
         /* Construct file path to the files */
@@ -185,7 +201,7 @@ int main(int argc, char **argv)
 
             /* Add noise floor */
             for (size_t i = 0; i < fsize; i++)
-                fltBuf[i] +=((float)rand()/(float)(RAND_MAX) - 0.5f) * 0.0001f;
+                fltBuf[i] += nrand(0,1) * 0.001;
 
             /* Shape spectrum */
             runFiler(&filter3,fltBuf,fltBuf,fsize);
@@ -224,7 +240,7 @@ int main(int argc, char **argv)
         closeSphereFile(sfp);
 
         /* TIMIT file names start with either TEST or TRAIN.
-         * Skip file path prefix that precedes that, if on exists
+         * Skip file path prefix that precedes that, if one exists
          */
         char *tfn = strstr(fn,"TRAIN/");
         if (tfn == NULL)
@@ -337,4 +353,69 @@ int main(int argc, char **argv)
     for (int j = 0; j < FRAMEFEATCNT; j++) 
         printf("%7.4lf %8.4lf \n",mean[j],stddev[j]);    
     printf("\n");
+}
+
+PHNFILE* openPhonemeFile(const char* filename, char *mode, PHNFILE* pf)
+{
+    FILE* fileHandle = NULL;   
+    if (*mode != 'r') {
+        fprintf(stderr,"In openPhonemeFile('%s'): invalid mode '%s'; only 'r' supported.\n",filename,mode);
+        return NULL;
+    }
+    //printf("Openning '%s' for read.\n",filename);
+
+    fileHandle = fopen(filename,"rb");
+    if (fileHandle == NULL) {
+        fprintf(stderr,"In openPhonemeFile('%s'): failed to open the file for read.\n",filename);
+        return NULL;
+    }
+    pf->fileHandle = fileHandle;
+    pf->mode = *mode;   
+    return pf;
+}
+
+PHNFILE* closePhonemeFile(PHNFILE* pf)
+{
+    FILE *fileHandle = pf->fileHandle;
+    int rv;
+    pf->fileHandle = NULL;
+    if (fileHandle == NULL)
+      return pf;
+    rv = fclose(fileHandle);
+    if (rv != 0) {
+        fprintf(stderr,"In closePhonemeFile(): failed to close the file.\n");
+        return NULL;
+    }
+    return pf;
+}
+
+size_t readPhonemeFile(PHNFILE* pf, size_t cnt, PHNINFO *phninfo)
+{
+    size_t rcnt = 0;
+    for (rcnt = 0; rcnt < cnt; rcnt++) {
+        char line[100];
+        char *s = fgets(line,sizeof(line),pf->fileHandle);
+        if (s == NULL)
+            break;
+        uint32_t startPos;
+        uint32_t endPos;
+        char phoneme[4];
+        int e = sscanf(line,"%u %u %4s",&startPos,&endPos,phoneme);
+        if (e < 3) {
+            fprintf(stderr,"In readPhonemeFile(): malformed line '%s'\n",line);
+            break;
+        }
+        phninfo->startPos = startPos;
+        phninfo->endPos = endPos;
+        strcpy(phninfo->phoneme,phoneme);
+        phninfo->label = SIL;
+        for (int i = 0; i < TIMIT_PHONEME_CNT; i++) {
+            if (strcmp(timit_phoneme_names[i],phoneme) == 0) {
+                phninfo->label = i;
+                break;
+            }
+        }
+        phninfo++;
+    };
+    return rcnt;
 }

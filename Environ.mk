@@ -28,7 +28,7 @@ LFLAGS += -pg
 endif
 
 ifneq ($(USEDOUBLE),) # USEDOUBLE is not blank - use double instead of float
-    CFLAGS += -Dfloat=double -DUSE_DOUBLE # bit exact math with python
+    CFLAGS += -DUSE_DOUBLE # bit exact math with python
 endif
 
 ifeq ($(OSTYPE),macos)

@@ -62,10 +62,9 @@ int test_dense_regression(const float range[3],
 
     model_fit(m,X,yt,NULL,M,
               NULL,NULL,NULL,0,
-              0,epochs,
-              learning_rate,weight_decay,
+              epochs,learning_rate,weight_decay,
               losses,accuracies,NULL,NULL,
-              1,1);
+              "shuffle=0 final=1 verbose=1");
 
     model_predict(m,X,y,M);
     
@@ -150,10 +149,9 @@ int test_lstm_regression(const float range[3],
 
     model_fit(m,X,yt,NULL,M,
               NULL,NULL,NULL,0,
-              0,epochs,
-              learning_rate,weight_decay,
+              epochs,learning_rate,weight_decay,
               losses,accuracies,NULL,NULL,
-              1,1);
+              "shuffle=0 final=1 verbose=1");
 
     model_predict(m,X,y,M);
 
@@ -242,10 +240,9 @@ int test_lstm_dense_regression(const float range[3],
 
     model_fit(m,X,yt,NULL,M,
               NULL,NULL,NULL,0,
-              0,epochs,
-              learning_rate,weight_decay,
+              epochs,learning_rate,weight_decay,
               losses,accuracies,NULL,NULL,
-              1,1);
+              "shuffle=0 final=1 verbose=1");
 
     model_predict(m,X,y,M);
 
@@ -358,10 +355,9 @@ int test_dense_classification(
 
     model_fit(m,xTr,yTr,NULL,trCnt,
                 xVd,yVd,NULL,vdCnt,
-                1,epochs,
-                learning_rate,weight_decay,
+                epochs,learning_rate,weight_decay,
                 losses,accuracies,v_losses,v_accuracies,
-                1,1);
+                "final=1 verbose=1");
     printf("\n");
 
     /* Test */
@@ -486,10 +482,12 @@ int read_jvowels_file(const char* input_path, const char* type,
         }
         if (i >= n_samples)
             break;
-        cnt = sscanf(line,"%f %f %f %f %f %f %f %f %f %f %f %f",
-                         &x[i][0],&x[i][1],&x[i][2],&x[i][3],
-                         &x[i][4],&x[i][5],&x[i][6],&x[i][7],
-                         &x[i][8],&x[i][9],&x[i][10],&x[i][11]);
+        cnt = sscanf(line,FMTF " " FMTF " " FMTF " " FMTF " " 
+                          FMTF " " FMTF " " FMTF " " FMTF " " 
+                          FMTF " " FMTF " " FMTF " " FMTF,
+                          &x[i][0],&x[i][1],&x[i][2],&x[i][3],
+                          &x[i][4],&x[i][5],&x[i][6],&x[i][7],
+                          &x[i][8],&x[i][9],&x[i][10],&x[i][11]);
         if (cnt < JVOWELS_FEAT_CNT) {
             fprintf(stderr,"%s: at line %d: "
                     "failed to parse 12 values from file\n",fn_x,i + 1);
@@ -590,10 +588,9 @@ int test_lstm_dense_classification(
 
     model_fit(m,xTr,yTrt,sTr,STr,
                 xTe,yTet,sTe,STe,
-                1,epochs,
-                learning_rate,weight_decay,
+                epochs,learning_rate,weight_decay,
                 losses,accuracies,v_losses,v_accuracies,
-                1,2);
+                "final=1 verbose=2");
     printf("\n");
 
     /* Test */
@@ -701,7 +698,7 @@ int main(int argc, char** argv)
         init_lrng(42);
         const int layers[1] = {35};
         const float range[3] = {-10.0,10.0,0.1};
-        test_lstm_dense_regression(range,layers,1,"adamw",0.0003,0.09,1000);
+        test_lstm_dense_regression(range,layers,1,"adamw",0.0003,0.09,1100);
     }
     if (tests[3]) {
         init_lrng(42);

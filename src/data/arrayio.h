@@ -3,6 +3,7 @@
 #ifndef ARRAYIO_H
 #define ARRAYIO_H
 #include <stdio.h>
+#include "float.h"
 #include "array.h"
 
 /* read_array - Read values from a file into a 2D array

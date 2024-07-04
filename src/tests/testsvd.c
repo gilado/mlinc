@@ -10,37 +10,43 @@
 #include "svd.h"
 
 float A0[4][4] = {
-    { 0.0 ,  0.0 ,  0.0 ,  2.0},
+    { 0.0 ,  0.0 ,  0.0 ,  2.0 },
     { 0.0 , -6.0 , -4.0 , -8.0 },
     { 6.0 ,  6.0 ,  2.0 ,  5.0 },
     { 0.0 ,  0.0 , -4.0 , -2.0 }
 };
 
 float A1[3][4] = {
-    { 1.0 ,  0.0 ,  0.0 ,  2.0},
-    { 0.0 ,  0.0 , -1.0 , -8.0},
-    { 0.0 , -1.0 ,  0.0 ,  5.0}
+    { 1.0 ,  0.0 ,  0.0 ,  2.0 },
+    { 0.0 ,  0.0 , -1.0 , -8.0 },
+    { 0.0 , -1.0 ,  0.0 ,  5.0 }
 };
 
 float A2[2][3] = {
-    { 1.0 ,  2.0 , 3.0},
-    { 4.0 ,  5.0 , 6.0}
+    { 1.0 ,  2.0 , 3.0 },
+    { 4.0 ,  5.0 , 6.0 }
 };
 
 float A3[4][3] = {
-    {  6.0 ,  2.0 ,  5.0},
-    {  0.0 , -4.0 , -8.0},
-    { -1.0 ,  0.0 ,  2.0},
-    {  2.0 ,  2.0 ,  7.0}
+    {  6.0 ,  2.0 ,  5.0 },
+    {  0.0 , -4.0 , -8.0 },
+    { -1.0 ,  0.0 ,  2.0 },
+    {  2.0 ,  2.0 ,  7.0 }
 };
 
 float A4[4][4] = {
-    {  6.0 ,  2.0 ,  5.0, 0.0},
-    {  0.0 , -4.0 , -8.0, 0.0},
-    { -1.0 ,  0.0 ,  2.0, 0.0},
-    {  2.0 ,  2.0 ,  7.0, 0.0}
+    {  6.0 ,  2.0 ,  5.0, 0.0 },
+    {  0.0 , -4.0 , -8.0, 0.0 },
+    { -1.0 ,  0.0 ,  2.0, 0.0 },
+    {  2.0 ,  2.0 ,  7.0, 0.0 }
 };
 
+float U3[4][3] = {
+    { -0.52163, 0.78568,-0.09576 },
+    {  0.63338, 0.54119, 0.53601 },
+    { -0.10894,-0.29311, 0.61008 },
+    { -0.56113,-0.06258, 0.57561 }
+};
 
 int is_close(fArr2D A_, fArr2D R_, int m, int n, float tol)
 {
@@ -198,6 +204,61 @@ int svd_test(fArr2D A, int m, int n, int quiet, int precision, int index)
     return ok && dec && pos & ortho;
 }
 
+int svd_test_U(fArr2D A, fArr2D U, int inplace, int m, int n, int quiet, int precision, int index)
+{
+    typedef float (*VecM);
+    typedef float (*ArrMN)[n];
+    typedef float (*ArrMM)[m];
+
+    float tol = 1 / pow(10,(precision-1));
+    int ok;
+    char name[16];
+    char format[16];
+    snprintf(format,sizeof(format),"%%%d.%df",3+precision,precision);
+
+    if (!quiet) {
+        snprintf(name,sizeof(name),"A%d",index);
+        print_array(A,m,n,name,format,0);
+    }
+    
+    if (m >= n) {
+        /* results of tall array svd */
+        ArrMN U_t = allocmem(m,n,float);
+
+        if (inplace) {
+            for (int i = 0; i < m; i++)
+                for (int j = 0; j < n; j++)
+                    U_t[i][j] = ((ArrMN) A)[i][j];
+            SVD(U_t,NULL,NULL,NULL,m,n);
+        }
+        else
+            SVD(A,U_t,NULL,NULL,m,n);
+        if (!quiet) {
+            snprintf(name,sizeof(name),"U%d",index);
+            print_array(U_t,m,n,name,format,0);
+        }
+        ok = is_close(U,U_t,m,n,tol);
+        freemem(U_t);
+    }
+    else {
+        /* results of wide array svd */
+        VecM S_w = allocmem(1,m,float);
+        ArrMM U_w = allocmem(m,m,float);
+        
+        SVD(A,U_w,S_w,NULL,m,n);
+        if (!quiet) {
+            snprintf(name,sizeof(name),"U%d",index);
+            print_array(U_w,m,m,name,format,0);
+        }
+        ok = is_close(U,U_w,m,m,tol);
+        freemem(S_w);
+        freemem(U_w);
+    }
+    if (!ok)
+        printf("Expected matrix U%d and calculated matrix U are not close\n",index);
+    return ok;
+}
+
 int full_test(int min_dim, int max_dim, int num_tests, int quiet, int precision)
 {
     int pass = 1;
@@ -229,6 +290,8 @@ int main()
     printf("smoke test 2 x 3 %s\n",svd_test(A2,2,3,1,5,2) ? "ok" : "failed");
     printf("smoke test 4 x 3 %s\n",svd_test(A3,4,3,1,5,3) ? "ok" : "failed");
     printf("smoke test 4 x 4 %s\n",svd_test(A4,4,4,1,5,4) ? "ok" : "failed");
+    printf("smoke test 4 x 3 U only %s\n",svd_test_U(A3,U3,0,4,3,1,5,5) ? "ok" : "failed");
+    printf("smoke test 4 x 3 inplace U only %s\n",svd_test_U(A3,U3,1,4,3,1,5,6) ? "ok" : "failed");
     printf("full test %s\n",full_test(2,512,100,1,4) ? "ok" : "failed");
     return 0;
 }

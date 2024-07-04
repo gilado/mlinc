@@ -2,6 +2,7 @@
 /* Functions to load and store multi-layer neural network model */
 #include <stdio.h>
 #include "mem.h"
+#include "float.h"
 #include "array.h"
 #include "arrayio.h"
 #include "dense.h"

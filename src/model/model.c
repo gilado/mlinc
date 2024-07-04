@@ -25,6 +25,10 @@ static void model_update(MODEL* m, float learning_rate, float weight_decay);
 static void print_status(int epoch, int nepochs, int progress, float etime,
                              float loss, float acc, float v_loss, float v_acc);
 
+static const char* find_kwarg(const char* kwargs, const char* key);
+static void get_kw_int(const char* kwargs, const char* key, int* val);
+static void get_epoch_params(const char* sch, int epoch, float* lr, float* wd);
+
 static inline void reset_state(MODEL* m)
 {
     for (int i = 0; i < m->num_layers; i++) {
@@ -259,32 +263,6 @@ void model_set_batch_size(MODEL* m, int batch_size)
     }
 }
 
-/* Sets a new loss function.
- *
- * Changes the loss function of an existing, possibly trained, model. 
- * This can be used to further train a pre-trained model.
- *
- * Currently only switching from cross-entropy to ctc-loss is supported
- *
- * Parameters:
- *   loss_func - ctc
- *
- * Returns: 1 on successful change, 0 otherwise
- */
-int model_set_loss_function(MODEL* m, const char* loss_func)
-{
-    if (m->loss_func == 'C')
-        return 1;
-    if (m->loss_func != 'c' || strcasecmp("ctc",loss_func)) {
-        fprintf(stderr,"model_set_loss_function: the only supported "
-                "loss function change is from cross-entropy to ctc\n");
-        return 0;
-    }
-    m->loss_func = 'C';
-    m->ctc = ctc_create(m->batch_size,m->output_dim,0);
-    return 1;
-}
-
 /* Trains model on data xTr and true outputs yTr. The data is organized as
  * a list of data sample sequences of varying lengths and corresponding
  * true outputs. The dimension of the vectors in x sequences is
@@ -318,10 +296,6 @@ int model_set_loss_function(MODEL* m, const char* loss_func)
  * validation data is provided. In that case, xVd, yVd and lenVd should
  * be set to NULL.
  *
- * shuffle applies only when data consists of one sequence; if not zero,
- * samples within the sequence are shuffled. Otherwise, sequences are 
- * always shuffled, and samples within sequences are never shuffled.
- *
  * num_epochs is the number of iterations through the entire dataset.
  *
  * learning_rate is a gradient multiplier controling the rate of descent.
@@ -341,20 +315,41 @@ int model_set_loss_function(MODEL* m, const char* loss_func)
  * are not NULL, they are updated with the validation loss and accuracy
  * at the end of each epoch.
  *
+ * kwargs points to a string that specifies additional optional 
+ * parameters. The parameters are in key=value format, separated by 
+ * spaces:
+ *
+ * shuffle applies only when data consists of one sequence; if not zero,
+ * samples within the sequence are shuffled. Otherwise, sequences are 
+ * always shuffled, and samples within sequences are never shuffled.
+ * Default value is 1.
+ *
  * If final is not zero, frees gradients memory at the end of training.
  * Otherwise, memory is retained, allowing further training of the model.
+ * Default value is 0.
  *
  * If verbose is not zero, prints the loss and accuracy values at the 
  * end of each epoch to standard output; if it is greater then 1, prints
  * each epoch's loss and accuracy on a separate line.
+ * Default value is 0.
+ *
+ * Schedule specified a training schedule with variable learning rate 
+ * and  * weight decay. The format of this parameter is <e>:<l>:<w>,...
+ * where <e> is number of epochs, <l> and <w> are the learning rate and 
+ * weight decay values for these epochs.
  */ 
 void model_fit(MODEL* m, 
     const fArr2D xTr, const fArr2D yTr, const int *lenTr, int numTr, 
     const fArr2D xVd, const fArr2D yVd, const int *lenVd, int numVd, 
-    int shuffle, int num_epochs, float learning_rate, float weight_decay,
-    float* losses, float* accuracies, float* v_losses, float* v_accuracies,
-    int final, int verbose)
+    int num_epochs, float learning_rate, float weight_decay,
+    float* losses, float* accuracies, 
+    float* v_losses, float* v_accuracies,
+    const char* kwargs)
 {
+    int verbose = 0; get_kw_int(kwargs,"verbose",&verbose);
+    int shuffle = 1; get_kw_int(kwargs,"shuffle",&shuffle);
+    int final = 0;   get_kw_int(kwargs,"final",&final);
+    const char* sch = find_kwarg(kwargs,"schedule");
     int L = m->num_layers;
     int N = m->output_dim;          /* Dimension of model output vectors */
     int B = m->batch_size;          /* Batch size (all layers)           */
@@ -392,11 +387,13 @@ void model_fit(MODEL* m,
     fArr2D dy[L];  /* Gradients with respect to the inputs          */
     for (int i = 0; i < L; i++) {
         LAYER l = m->layer[i];
-        if (l.type == 'l') { /* lstm layer */
-            dy[i] = allocmem(l.lstm->B,l.lstm->S,float);
-        }
-        else { /* dense layer */
-            dy[i] = allocmem(l.dense->B,l.dense->S,float);
+        switch (l.type) {
+            case 'd':
+                dy[i] = allocmem(l.dense->B,l.dense->S,float);
+            break;
+            case 'l':
+                dy[i] = allocmem(l.lstm->B,l.lstm->S,float);
+            break;
         }
     }
     
@@ -427,6 +424,9 @@ void model_fit(MODEL* m,
         loss = 0;
         match_cnt = 0;
         sample_cnt = 0;
+
+        if (sch != NULL)
+            get_epoch_params(sch,epoch,&learning_rate,&weight_decay);
 
         batch_shuffle(bTr);
         reset_state(m);
@@ -825,3 +825,48 @@ static void print_status(int epoch, int nepochs, int progress, float etime,
     printf("\r%s",status);
     fflush(stdout);
 }
+
+static const char* find_kwarg(const char* kwargs, const char* key)
+{
+    if (kwargs == NULL || key == NULL)
+        return NULL;
+    char* p = strstr(kwargs,key);
+    if (p == NULL || (p != kwargs && p[-1] != ' '))
+        return NULL;
+    p += strlen(key);
+    while (*p == ' ') p++;
+    if (*(p++) != '=')
+        return NULL;
+    while (*p == ' ') p++;
+    return p;        
+}
+
+static void get_kw_int(const char* kwargs, const char* key, int* val)
+{
+    const char* sval = find_kwarg(kwargs,key);
+    if (sval != NULL)
+        *val = atoi(sval);
+}
+
+static void get_epoch_params(const char* sch, int epoch, float* lr, float* wd)
+{
+    
+    int te = 0;
+    while(sch != NULL) {
+        int e; float l, w;
+        int c = sscanf(sch,"%d" ":" FMTF ":" FMTF,&e,&l,&w);
+        if (c == 0 || c == EOF)
+            break;
+        te += e;
+        if (c >= 3) *wd = w;
+        if (c >= 2) *lr = l;
+        if (epoch < te)
+            break;
+        sch = index(sch,',');
+        if (sch != NULL)
+            if (*(++sch) == '\0')
+                sch = NULL;
+    }
+}
+
+

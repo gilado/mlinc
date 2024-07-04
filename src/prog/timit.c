@@ -8,6 +8,7 @@
 #include <unistd.h>
 #include <math.h>
 #include "mem.h"
+#include "float.h"
 #include "etime.h"
 #include "random.h"
 #include "array.h"
@@ -96,7 +97,9 @@ int timit_lstm_dense_classification(
                         const char* loadmodel, const char* storemodel,
                         int layers[], int layers_cnt, 
                         int ctc_mode, char* optimizer, int batch_size,
-                        float learning_rate, float weight_decay, int epochs)
+                        float learning_rate, 
+                        float weight_decay, 
+                        int epochs, char* schedule)
 {
     char datetimebuf[20];
     ctc_mode = (ctc_mode) ? 1: 0;
@@ -105,7 +108,7 @@ int timit_lstm_dense_classification(
     printf("classes of samples from the TIMIT dataset\n\n");
     printf("Run 'timit -h' to list program options\n\n");
     printf("Training with default parameters may take a few hours\n\n");
-    const int Dr = TIMIT_FEAT_CNT;      /* Input vectors dimension          */
+    const int Dr = FEAT_CNT;            /* Input vectors dimension          */
     const int D = EXPENDED_FEAT_CNT;    /* Expended input vectors dimension */
     const int N = REDUCED_PHONEME_CNT;  /* Output vector dimension          */
     int L = layers_cnt + 1;             /* Number of layers                 */
@@ -129,8 +132,6 @@ int timit_lstm_dense_classification(
                 case 'l': layers[i] = l.lstm->S; break;
             }
         }
-        if (ctc_mode)
-            model_set_loss_function(m,"ctc");
     }
     else {
         /* Create Model (to process multiple batches of B samples each) */
@@ -150,8 +151,11 @@ int timit_lstm_dense_classification(
     printf("%d.\n",N);
     printf("Input dimension %d. Expended input dimension %d. Batch size %d.\n",
                                                                        Dr,D,B);
-    printf("%d epochs, learning rate %g, weight decay %g \n",
-                                            epochs,learning_rate,weight_decay);
+    printf("%d epochs, ",epochs);
+    if (schedule != NULL)
+        printf("learning rate schedule %s \n",schedule);
+    else
+        printf("learning rate %g, weight decay %g \n",learning_rate,weight_decay);
     printf("Using %s loss function\n\n",loss_func);
 
 
@@ -246,12 +250,12 @@ int timit_lstm_dense_classification(
 
     if (epochs > 0) {
         printf("%s Training...\n",date_time(datetimebuf));
+        char kwargs[512];
+        snprintf(kwargs,sizeof(kwargs),"schedule=%s verbose=2",schedule);
         model_fit(m,xTr,yTrt,sTr,STr,
                     xVd,yVdt,sVd,SVd,
-                    1,epochs,
-                    learning_rate,weight_decay,
-                    losses,accuracies,v_losses,v_accuracies,
-                    0,2);
+                    epochs,learning_rate,weight_decay,
+                    losses,accuracies,v_losses,v_accuracies,kwargs);
                     
     }
 
@@ -415,8 +419,9 @@ int main(int argc, char** argv)
         " -s: Store model in file at the end of training                \n"
         "\n";
 
-    int epochs = 12, bsize = -128; /* Nagative value indicates default value */
-    float lr = 0.001, wd = 0.01;              
+    int epochs = 21, bsize = -128; /* Nagative value indicates default value */
+    float lr = 0.001, wd = 0.01;
+    char *sch = "12:0.001:0.01,6:0.0001:0.01,3:0.00001:0";
     char *loadfile = NULL, *storefile = NULL;
     #define maxlyrcnt 5
     int lyrcnt = 3;
@@ -462,6 +467,6 @@ int main(int argc, char** argv)
     int ok;
     init_lrng(42);
     ok = timit_lstm_dense_classification(loadfile,storefile,layers,lyrcnt,
-                                         ctc_mode,"adamw",bsize,lr,wd,epochs);
+                                      ctc_mode,"adamw",bsize,lr,wd,epochs,sch);
     return (ok) ? 0 : -1;
 }
