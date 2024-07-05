@@ -19,8 +19,8 @@ static void reorder_tall(int m,int n,
 static void svd_wide(int n, int m, fArr2D a_/*[m][n]*/,
                     fVec q_/*[m]*/, fArr2D vt_/*[m][n]*/, fArr2D u_/*[m][m]*/);
 
-static void reorder_wide(int m,int n,
-                    fVec q_/*[m]*/, fArr2D u_/*[m][m]*/, fArr2D vt_/*[m][n]*/);
+static void reorder_wide(int n, int m,
+                    fVec q_/*[m]*/, fArr2D vt_/*[m][n]*/, fArr2D u_/*[m][m]*/);
 
 /* SVD - Performs SVD decomposition, using QR decomposition, of matrix A to
  *       obtain a left orthogonal matrix U, a vector of non-negative singular
