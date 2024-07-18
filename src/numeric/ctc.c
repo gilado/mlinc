@@ -70,8 +70,8 @@ static inline float logsumexp(float a, float b)
  *   ctc loss value
  *
  * Notes:
- * 2. ctc_loss stores yp, converted to log scale, to be used by dLdy_ctc_loss
- * 1. It merges consecutive identical labels, and removes blanks
+ * 1. ctc_loss stores yp, converted to log scale, to be used by dLdy_ctc_loss
+ * 2. It merges consecutive identical labels, and removes blanks
  *    a a a b b c dd -> a b c d ;  a a ^ a b b c dd -> a a b c d ( ^ == blank)
  * 3. It stores the predicted and true labels, to be used by ctc_match_sum
  *
