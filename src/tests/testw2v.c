@@ -109,7 +109,7 @@ int main(int argc, char** argv)
         // Create a vector similar to the selected word vector
         float simvec[WDIM];
         memcpy(simvec,word_embeddings[idx].embedding,WDIM * sizeof(float));
-        float eps_dev = vecnorm(simvec,WDIM) * 0.2;
+        float eps_dev = vecnorm(simvec,WDIM) * 0.15;
         for (int i = 0; i < WDIM; i++)
             simvec[i] += nrand(0,eps_dev);
         float simvec_norm = vecnorm(simvec,WDIM);

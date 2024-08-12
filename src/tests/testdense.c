@@ -76,11 +76,9 @@ int test_dense(const float range[3], const int layers[], int layers_cnt,
         fflush(stdout);
         /* Backward pass */
         dLdy_mean_square_error(y,yt,dy[L - 1],M,N);
-        for (int j = L - 1; j > 0; j--) {
-            dense_backward(l[j],dy[j],yp[j - 1],
-                           gWx[j],l[j]->activation,dy[j - 1],0);
-        }
-        dense_backward(l[0],dy[0],X,gWx[0],l[0]->activation,NULL,0);
+        for (int j = L - 1; j > 0; j--)
+            dense_backward(l[j],dy[j],yp[j - 1],gWx[j],dy[j - 1],0);
+        dense_backward(l[0],dy[0],X,gWx[0],NULL,0);
         /* Update weights */
         for (int j = 0; j < L; j++)
             dense_update_lin(l[j]->Wx,gWx[j],learning_rate,l[j]->D,l[j]->S);

@@ -13,7 +13,7 @@
 static void svd_tall(int m, int n, fArr2D a_/*[m][n]*/,
                     fVec q_/*[n]*/, fArr2D u_/*[m][n]*/, fArr2D vt_/*[n][n]*/);
 
-static void reorder_tall(int m,int n,
+static void reorder_tall(int m, int n,
                     fVec q_/*[n]*/, fArr2D u_/*[m][n]*/, fArr2D vt_/*[n][n]*/);
 
 static void svd_wide(int n, int m, fArr2D a_/*[m][n]*/,

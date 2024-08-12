@@ -64,12 +64,12 @@ static inline void softmax(fArr2D a_/*[B][K]*/, int B, int K)
         typedef float (*VecK); 
         VecK  p = (VecK) a[j];
 
-        float m = 0.0; // max(p[])
+        float m = 0.0; /* max(p[]) */
         for (int i = 0; i < K; i++) {
             if (m < p[i])
                 m = p[i];
         }
-        float s = 0.0; // sum(exp(p[] - m)
+        float s = 0.0; /* sum(exp(p[] - m) */
         for (int i = 0; i < K; i++) {
             p[i] = exp(p[i] - m);
             s += p[i];

@@ -31,6 +31,7 @@ DENSE* dense_create(int units, char* activation)
     if (!strcasecmp("relu",activation)) l->activation = 'r';
     if (!strcasecmp("softmax",activation)) l->activation = 'S';
     if (l->activation == 0) {
+        freemem(l);
         fflush(stdout);
         fprintf(stderr,"dense_create: invalid activation '%s'\n",activation);
         exit(-1);

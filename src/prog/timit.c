@@ -23,7 +23,7 @@
 #include "beamsrch.h"
 #include "alignseq.h"
 
-/* Directoires of phoneme feature files (no trailing slash) */
+/* Directories of phoneme feature files (no trailing slash) */
 const char* timit_tr_data_dir = "data/timit/features/train";
 const char* timit_vd_data_dir = "data/timit/features/validate";
 const char* timit_te_data_dir = "data/timit/features/test";
@@ -251,7 +251,10 @@ int timit_lstm_dense_classification(
     if (epochs > 0) {
         printf("%s Training...\n",date_time(datetimebuf));
         char kwargs[512];
-        snprintf(kwargs,sizeof(kwargs),"schedule=%s verbose=2",schedule);
+        if (schedule != NULL && strlen(schedule) > 0)
+            snprintf(kwargs,sizeof(kwargs),"schedule=%s verbose=2",schedule);
+        else
+            snprintf(kwargs,sizeof(kwargs),"verbose=2");
         model_fit(m,xTr,yTrt,sTr,STr,
                     xVd,yVdt,sVd,SVd,
                     epochs,learning_rate,weight_decay,
@@ -404,31 +407,34 @@ int timit_lstm_dense_classification(
 int main(int argc, char** argv)
 {
     const char* usage = 
-        "Usage: timit [-h] [-e <epochs>]                                \n"
-        "             [-r <learning rate>] [-w weight decay]            \n"
-        "             [-b <batch size>] [-L 's1 s2 ...']                \n"
-        "             [-l <model file>] [-s <model file>]               \n"
-        "             [ -ctc | -cross-entropy ]                         \n"
-        "                                                               \n"
-        " -L: LSTM layer specification. One additional output layer     \n"
-        "     is implied. So for example -L '126 64' specifies two      \n"
-        "     LSTM layers followed by a Dense output layer.             \n"
-        "     Notice that the specification is quoted.                  \n"
-        " -l: Load model from file and continue to train for number     \n"
-        "     of epochs specified by -e; ignore -L option.              \n"
-        " -s: Store model in file at the end of training                \n"
-        "\n";
+      "Usage: timit [-h] [-e <epochs>]                                      \n"
+      "             [-r <learning rate>] [-w weight decay] [-b <batch size>]\n"
+      "             [-L 's1 s2 ...'] [-S e:lr:wd,e:lr:wd,...]               \n"
+      "             [-l <model file>] [-s <model file>]                     \n"
+      "             [-ctc | -cross-entropy]                                 \n"
+      "                                                                     \n"
+      " -L: LSTM layer specification. One additional output layer           \n"
+      "     is implied. So for example -L '126 64' specifies two            \n"
+      "     LSTM layers followed by a Dense output layer.                   \n"
+      "     Notice that the specification is quoted.                        \n"
+      " -S: Learning rate schedule consisting of comma separated list of    \n"
+      "     colon separated tuples of number of epochs, learning rate during\n"
+      "     these epochs, weight decay during these epochs.                 \n"
+      " -l: Load model from file and continue to train for number           \n"
+      "     of epochs specified by -e; ignore -L option.                    \n"
+      " -s: Store model in file at the end of training                      \n"
+      "\n";
 
     int epochs = 21, bsize = -128; /* Nagative value indicates default value */
     float lr = 0.001, wd = 0.01;
-    char *sch = "12:0.001:0.01,6:0.0001:0.01,3:0.00001:0";
+    char *sch = "12:0.001:0.01,4:0.0001:0.01,5:0.00001:0";
     char *loadfile = NULL, *storefile = NULL;
     #define maxlyrcnt 5
     int lyrcnt = 3;
     int layers[maxlyrcnt+1] = {128,128,128};
     int ctc_mode = 1;
     int opt;
-    while ((opt = getopt(argc, argv, "e:r:w:b:l:s:L:c:h")) != -1) {
+    while ((opt = getopt(argc, argv, "e:r:w:b:l:s:L:S:c:h")) != -1) {
         switch (opt) {
             case 'h': printf(usage); exit(0);
             case 'e': epochs = atoi(optarg); break;
@@ -446,6 +452,7 @@ int main(int argc, char** argv)
                     exit(-1);
                 }
             break;
+            case 'S': sch = optarg; break;
             case 'c':
                 if (strcmp(optarg,"tc") == 0)
                     ctc_mode = 1;

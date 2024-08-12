@@ -6,9 +6,21 @@
 #include "array.h"
 #include "beamsrch.h"
 
-void beam_search(fArr2D probabilities_, 
-                 int T, int C, int beam_width, 
-                 iArr2D sequences_, fVec scores_) 
+struct can_seq_s {
+    int* seq;
+    float score;
+};
+
+static inline int can_seq_cmp(const void* a, const void* b)
+{
+    float as = ((const struct can_seq_s*) a)->score;
+    float bs = ((const struct can_seq_s*) b)->score;
+    return (as > bs) - (as < bs);
+}
+
+void beam_search(fArr2D probabilities_,
+                 int T, int C, int beam_width,
+                 iArr2D sequences_, fVec scores_)
 {
     const int B = beam_width;
     typedef float (*fArrTC)[C];
@@ -23,18 +35,8 @@ void beam_search(fArr2D probabilities_,
     float ns[(useheap) ? 1 : (B * C)][(useheap) ? 1 : (T + 1)];
     iArrBT1 new_seqs = (iArrBT1) ((useheap) ? allocmem(B * C,T + 1,float) : ns);
 
-    struct can_seq_s {
-        int* seq;
-        float score;
-    } can_seqs[B * C];
+    struct can_seq_s can_seqs[B * C];
 
-    inline int can_seq_cmp(const void* a, const void* b)
-    { 
-        float as = ((const struct can_seq_s*) a)->score;
-        float bs = ((const struct can_seq_s*) b)->score;
-        return (as > bs) - (as < bs); 
-    }
-            
     for (int i = 0; i < B; i++)
         for (int j = 0; j <= T; j++)
             sequences[i][j] = 0;

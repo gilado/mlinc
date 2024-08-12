@@ -89,11 +89,9 @@ int test_lstm(const float range[3], const int layers[], int layers_cnt,
         fflush(stdout);
         /* Backward pass */
         dLdy_mean_square_error(y,yt,dy[L - 1],M,N);
-        for (int j = L - 1; j > 0; j--) {
-            lstm_backward(l[j],dy[j],yp[j - 1],
-                                          gW[j],l[j]->activation,dy[j - 1],j);
-        }
-        lstm_backward(l[0],dy[0],X,gW[0],l[0]->activation,NULL,0);
+        for (int j = L - 1; j > 0; j--)
+            lstm_backward(l[j],dy[j],yp[j - 1],gW[j],dy[j - 1],j);
+        lstm_backward(l[0],dy[0],X,gW[0],NULL,0);
         /* Update weights */
         update_step++;
         for (int j = 0; j < L; j++) {

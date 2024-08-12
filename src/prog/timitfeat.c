@@ -69,8 +69,7 @@ int phncnt = 0;           /* Acutal number of entries in phoneme[] */
 /* Maximum number of features in one segment */
 #define MAX_FEATURES MAXSEGMENT * (FRAMEFEATCNT + 1)
 
-#ifndef __APPLE__
-/* Check if a float value is a number */
+/* Check if a float value is a number. Works even when using -ffast-math */
 static int isnumber(float f)
 {
     char s[32]; 
@@ -80,7 +79,6 @@ static int isnumber(float f)
         return 0;
     return 1;
 }
-#endif 
 
 int main(int argc, char **argv)
 {

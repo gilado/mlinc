@@ -114,7 +114,6 @@ static inline void dense_backward(DENSE* restrict l,
                                   const fArr2D restrict dy/*[B][S]*/, 
                                   const fArr2D restrict X/*[B][D]*/,
                                   fArr2D restrict gWx/*[D][S]*/,
-                                  char activation,
                                   fArr2D restrict dx/*[B][D]*/, int lyr)
 {
     (void) lyr;
@@ -128,7 +127,7 @@ static inline void dense_backward(DENSE* restrict l,
          */
         /* dx = (dy @ Wx.T) */
         matmulT(dx,dy,l->Wx,l->B,l->S,l->D);
-        switch (activation) {
+        switch (l->activation) {
             case 's' : d_sigmoid(dx,X,l->B,l->D); break;
             case 'r' : d_relu(dx,X,l->B,l->D); break;
             /* REVIEW: applying d_softmax() degrades convergence - why? */

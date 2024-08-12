@@ -6,17 +6,17 @@ mkdir -p data/timit/features/test
 if ! [ -d data/timit/LDC93S1/timit ] ; then
   echo "The TIMIT dataset is available via https://catalog.ldc.upenn.edu/LDC93S1"
   echo "Place the compressed file in '$(pwd)/data/timit' as TIMIT.tar"
-  echo "Alternatively, the dataset is vailable via torrent"
-  read -p "Press any key to continue, ^C to abort "
+  echo "Alternatively, the dataset is available via torrent"
+  read -p "Press any key to continue and download via torrent, ^C to abort "
   pushd data/timit
   # If the below command does not work, manually use torrent client
   # and rename the downloaded file TIMIT.tar
   # In that case, manually run the remaining commands
   # Uncomment the below 3 lines to download via torrent
   ####
-  #echo "Starting ktorrent. You may need to manually close it"
-  #ktorrent --silent https://academictorrents.com/download/7bb27b6fe1712ff49ec80b0a1fcdb43fb465923e.torrent
-  #mv ~/'TIMIT Acoustic-Phonetic Continuous Speech Corpus - LDC93S1' TIMIT.tar
+  echo "Starting ktorrent. You may need to manually close it"
+  ktorrent --silent https://academictorrents.com/download/7bb27b6fe1712ff49ec80b0a1fcdb43fb465923e.torrent
+  mv ~/'TIMIT Acoustic-Phonetic Continuous Speech Corpus - LDC93S1' TIMIT.tar
   ####
   if [ -f TIMIT.tar ] ; then 
       tar -xf TIMIT.tar

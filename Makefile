@@ -39,8 +39,8 @@ LIB_DIRS =
 
 PROGRAMS = sph2wav feat2audio word2vec har timitfeat timit timittest
 TESTS = testhann testfilter testlpc testlsp testw2v \
-		testmem testarray testrandom testqr testsvd testpca \
-		testadamw testctc testdense testlstm testmodel 
+		testmem testarray testrandom testhash testqr testsvd testpca \
+		testadamw testctc testdense testlstm testembed testmodel 
 
 SRCS = $(shell find $(SRC_DIR) -name '*.c')
 HDRS = $(shell find $(SRC_DIR) -name '*.h')
@@ -54,7 +54,7 @@ ifeq ($(NOPLOT),)
 include Plot.mk   # plotting (matlibplot for C++) support, if available
 endif
 
-.PRECIOUS: $(OBJS) # Do not delete object files after link
+.PRECIOUS: $(OBJS) $(AOBJS) # Do not delete object files after link
 
 all: $(PROGRAMS) $(TESTS)
 

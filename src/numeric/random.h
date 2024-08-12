@@ -43,9 +43,9 @@ static inline float urand(float min, float max)
  */
 static inline float nrand(float mean, float stddev) 
 {
-    // Box-Muller transform
+    /* Box-Muller transform */
     float z = sqrt(-2.0 * log(lrng())) * sin(2.0 * M_PI * lrng());
-    float num =  mean + stddev * z; // Shift and scale
+    float num =  mean + stddev * z; /* Shift and scale */
     return num;
 }
 

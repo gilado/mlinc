@@ -658,34 +658,22 @@ static void model_batch_backward(MODEL* m, fArr2D x, fArr2D* dy, fArr2D* yp)
     int L = m->num_layers;
     for (int j = L - 1; j > 0; j--) {
         LAYER l = m->layer[j];
-        char activation = 'n';
-        switch(l.type) {
-            case 'd': activation = l.dense->activation; break;
-            case 'l': activation = l.lstm->activation; break;
-        } 
         switch(l.type) {
             case 'd':
-                dense_backward(l.dense,dy[j],yp[j - 1],
-                               l.grads[0],activation,dy[j - 1],j);
+                dense_backward(l.dense,dy[j],yp[j - 1],l.grads[0],dy[j - 1],j);
             break;
             case 'l':
-                lstm_backward(l.lstm,dy[j],yp[j - 1],
-                              l.grads,activation,dy[j - 1],j);
+                lstm_backward(l.lstm,dy[j],yp[j - 1],l.grads,dy[j - 1],j);
             break;
         }
     }
     LAYER l = m->layer[0];
-    char activation = 'n';
-    switch(l.type) {
-        case 'd': activation = l.dense->activation; break;
-        case 'l': activation = l.lstm->activation; break;
-    } 
     switch(l.type) {
         case 'd':
-            dense_backward(l.dense,dy[0],x,l.grads[0],activation,NULL,0);
+            dense_backward(l.dense,dy[0],x,l.grads[0],NULL,0);
         break;
         case 'l':
-            lstm_backward(l.lstm,dy[0],x,l.grads,activation,NULL,0);
+            lstm_backward(l.lstm,dy[0],x,l.grads,NULL,0);
         break;
     }
 }

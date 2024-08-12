@@ -209,7 +209,6 @@ static inline void lstm_backward(LSTM* restrict l,
                                  const fArr2D restrict dY/*[B][S]*/, 
                                  const fArr2D restrict X/*[B][D]*/,
                                  fArr2D* g/*Grsdient matrices*/,
-                                 char activation,
                                  fArr2D restrict dX/*[B][D]*/,
                                  int lyr)
 {
@@ -271,7 +270,7 @@ static inline void lstm_backward(LSTM* restrict l,
         /* Update output gate gradient */
         float do_[S]; /* 'do' is a C keyword, use do_ for variable name */
         for (int j = 0; j < S; j++)
-            do_[j] = dh[j] * tanh(c[t][j]) * d_activate(o[t][j],activation);
+            do_[j] = dh[j] * tanh(c[t][j]) * d_activate(o[t][j],l->activation);
         addoutermul(gWo,x[t],do_,D,S);
         addoutermul(gUo,h[t-1],do_,S,S);
         /* Update cell state gradient */
@@ -293,14 +292,14 @@ static inline void lstm_backward(LSTM* restrict l,
         /* Update input gate gradient */
         float di[S];
         for (int j = 0; j < S; j++)
-            di[j] = dc[j] * cc[t][j] * d_activate(i[t][j],activation); /* REVIEW - not cc[t-1] */
+            di[j] = dc[j] * cc[t][j] * d_activate(i[t][j],l->activation); /* REVIEW - not cc[t-1] */
         addoutermul(gWi,x[t],di,D,S);
         addoutermul(gUi,h[t-1],di,S,S);
 
         /* Update forget gate gradient */
         float df[S];
         for (int j = 0; j < S; j++)
-            df[j] = dc[j] * c[t-1][j] * d_activate(f[t][j],activation);
+            df[j] = dc[j] * c[t-1][j] * d_activate(f[t][j],l->activation);
         addoutermul(gWf,x[t],df,D,S);
         addoutermul(gUf,h[t-1],df,S,S); 
         
