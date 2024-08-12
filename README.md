@@ -14,6 +14,7 @@ algorithm details evident.
     -   Linear (Dense) fully connected neural network
     -   LSTM - Long Short Term Memory neural network (Hochreiter -
         Schmidhuber - Gers - Cummins)
+    -   Embedding (Mikolov)
     -   Multi-layer neural network model
 -   Activation functions and their derivatives
     -   Sigmoid
