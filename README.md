@@ -31,6 +31,8 @@ algorithm details evident.
     -   Beam search
     -   Sequence alignment (Needleman - Wunsch)
     -   Edit distance (Levenshtein)
+-   Search
+    -   Approximate Nearest Neighbors - Annoy (Erik Bernhardsson)
 -   Decomposition
     -   SVD - Singular Value Decomposition (Golub - Reinsch)
     -   PCA - Principal Components Analysis
@@ -107,7 +109,8 @@ for use in test programs. For example:\
 In the project root directory, run these commands:\
 `$ bin/testmodel`\
 `$ bin/har`\
-`$ bin/timit`
+`$ bin/timit`\
+`$ bin/testembed`
 
 ### License
 
