@@ -8,10 +8,9 @@
 
 float current_time()
 {
-    struct timespec currentTime;
-    clock_gettime(CLOCK_MONOTONIC, &currentTime);
-    return ((float) currentTime.tv_sec) + 
-           ((float) currentTime.tv_nsec) / 1000000000;
+    struct timespec curtime;
+    clock_gettime(CLOCK_THREAD_CPUTIME_ID, &curtime);
+    return (float) (curtime.tv_sec + (curtime.tv_nsec / 1000000000.0));
 }
 
 char* date_time(char buffer[20]) 

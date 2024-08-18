@@ -22,24 +22,25 @@ BIN_DIR = ./bin
 NUM_DIR    = $(SRC_DIR)/numeric
 DECOMP_DIR = $(SRC_DIR)/decomp
 STATS_DIR  = $(SRC_DIR)/stats
+SEARCH_DIR = $(SRC_DIR)/search
 DATA_DIR   = $(SRC_DIR)/data
 MODEL_DIR  = $(SRC_DIR)/model
 AUDIO_DIR  = $(SRC_DIR)/audio
 FEAT_DIR   = $(SRC_DIR)/feat
-TIMIT_DIR  = $(SRC_DIR)/timit
 TESTS_DIR  = $(SRC_DIR)/tests
 PROG_DIR   = $(SRC_DIR)/prog
 
 # Environ.mk and Plot.mk may add to INC_DIRS and LIB_DIRS
-INC_DIRS = -I$(SRC_DIR) -I$(NUM_DIR) -I$(DECOMP_DIR) -I$(STATS_DIR)  \
-		   -I$(DATA_DIR) -I$(MODEL_DIR) -I$(AUDIO_DIR) -I$(FEAT_DIR) \
-		   -I$(TIMIT_DIR)
+INC_DIRS = -I$(SRC_DIR) -I$(NUM_DIR) -I$(DECOMP_DIR) \
+		   -I$(STATS_DIR) -I$(SEARCH_DIR) -I$(DATA_DIR) \
+		   -I$(MODEL_DIR) -I$(AUDIO_DIR) -I$(FEAT_DIR)
            
 LIB_DIRS =
 
 PROGRAMS = sph2wav feat2audio word2vec har timitfeat timit timittest
 TESTS = testhann testfilter testlpc testlsp testw2v \
-		testmem testarray testrandom testhash testqr testsvd testpca \
+		testmem testarray testrandom testhash testannoy \
+		testqr testsvd testpca \
 		testadamw testctc testdense testlstm testembed testmodel 
 
 SRCS = $(shell find $(SRC_DIR) -name '*.c')

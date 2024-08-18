@@ -1,6 +1,8 @@
 /* Copyright (c) 2023-2024 Gilad Odinak  */
 /* Hash map functions */
 #include <strings.h>
+#include <stdlib.h>  /* realloc() */
+#include <memory.h>  /* memset()  */
 #include "mem.h"
 #include "hash.h"
 

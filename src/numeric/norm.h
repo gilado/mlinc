@@ -3,6 +3,7 @@
 #ifndef NORM_H
 #define NORM_H
 #include <math.h>
+#include "array.h"
 
 /* Calculates and returns the norm of the vector x.
  */

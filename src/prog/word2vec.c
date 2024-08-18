@@ -14,6 +14,7 @@
 #include "random.h"
 #include "array.h"
 #include "hash.h"
+#include "cossim.h"
 #include "newsfile.h"
 #include "loss.h"
 #include "embedding.h"
@@ -47,26 +48,6 @@ float* word_embedding(EMBEDDING* embd, int wrdinx)
     typedef float (*ArrDE)[embd->E];
     ArrDE Wx = (ArrDE)  embd->Wx;
     return Wx[wrdinx];
-}
-
-/* Calculates cosine similarity between vectros w, v whose length is len */
-float cosine_similarity(const float *v, const float *w, int len) 
-{
-    float dot_product = 0.0;
-    float norm_v = 0.0;
-    float norm_w = 0.0;
-    if (v == NULL || w == NULL)
-        return 0;
-    for (int i = 0; i < len; ++i) {
-        dot_product += v[i] * w[i];
-        norm_v += v[i] * v[i];
-        norm_w += w[i] * w[i];
-    } 
-    norm_v = sqrt(norm_v);
-    norm_w = sqrt(norm_w);    
-    if (norm_v == 0 || norm_w == 0)
-        return 0.0;    
-    return dot_product / (norm_v * norm_w);
 }
 
 /* Compare two word frequency values - used with qsort to order
