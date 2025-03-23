@@ -103,7 +103,7 @@ int main(int argc, char **argv)
 
         if (winSize == 0) {
             duration = etime - stime; // in seconds
-            frameSize = (int) duration * 1000 / nfrm; // in milliseconds
+            frameSize = (int) (duration * 1000 / nfrm); // in milliseconds
             winSize = (2 * frameSize) * audioSampleRate / 1000; // in samples
             featcnt = fcnt;
         }
@@ -146,7 +146,7 @@ int main(int argc, char **argv)
     }
 
     printf("winSize %d samples, frameSize %d millisec "
-           "(first sample %5.3lf seconds)\n",
+           "(first sample " FMTF " seconds)\n",
            winSize,frameSize,duration);
  
     wfout.audioFormat = 3; // float
