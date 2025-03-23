@@ -39,7 +39,6 @@ struct annoy_node_s {
             int split[2];       /* Indices of vectors defining the hyperplane*/
             ANNOY_NODE_IX left; /* Sub tree of vectors 'left' of hyperplane  */
             ANNOY_NODE_IX right;/* Sub tree of vectors 'right' of hyperplane */
-//          fVec hpv;           /* Normal vector orthogonal to the hyperplane*/
         };
     };
 };

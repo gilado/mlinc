@@ -18,6 +18,40 @@ static inline int can_seq_cmp(const void* a, const void* b)
     return (as > bs) - (as < bs);
 }
 
+/*  Performs beam search decoding on a set of probabilities over time steps.
+ *
+ * Parameters:
+ *   probabilities - A 2D array [T][C] of probabilities, where T is the number
+ *                   of time steps and C is the number of classes (symbols).
+ *   T             - The number of time steps.
+ *   C             - The number of classes (symbols) at each time step.
+ *   beam_width    - The beam width, i.e., the number of sequences to keep
+ *                   at each step.
+ *   sequences     - A 2D array [B][T+1] to store the resulting sequences,
+ *                   where B is the beam width.
+ *   scores        - A 1D array [B] to store the scores of the 
+ *                   resulting sequences.
+ *
+ * Note:
+ *   This function allocates heap memoryif (B * C) * ( T + 1) > 65536 bytes.
+ *
+ * Description:
+ *   This function implements beam search decoding. It iteratively builds
+ *   up sequences by selecting the most likely symbols at each time step,
+ *   keeping only the top "beam_width" sequences with the highest cumulative
+ *   scores.
+ *
+ *   The function first initializes the sequences and scores. At each time
+ *   step, it generates candidate sequences by extending the existing 
+ *   sequences with each possible symbol.
+ *   The candidates are then sorted by their scores, and the top "beam_width"
+ *   sequences are selected for the next time step. The process repeats until
+ *   all time steps are processed.
+ *
+ *   Memory is allocated dynamically for storing new sequences if the total
+ *   size exceeds a certain threshold.
+ */
+
 void beam_search(fArr2D probabilities_,
                  int T, int C, int beam_width,
                  iArr2D sequences_, fVec scores_)

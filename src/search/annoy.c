@@ -18,16 +18,16 @@
 #include "annoy.h"
 
 /* Used internally to search the tree */
-typedef struct simsim_s {
+typedef struct cossim_s {
     int data_ix;  /* Index of a data vector */
     float cossim; /* Cosine similarity of this vector to the query vector */
-} SIMSIM;
+} COSSIM;
 
 static ANNOY_NODE_IX build_tree(ANNOY* annoy, int* data_ix, int nvec);
 static int search_tree(ANNOY* annoy, ANNOY_NODE_IX node_ix, 
                        const fVec query, float search_q, 
-                       SIMSIM* similar, int size, int cnt);
-static void similarity_sort(SIMSIM* sim, int cnt, int dir);
+                       COSSIM* similar, int size, int cnt);
+static void similarity_sort(COSSIM* sim, int cnt, int dir);
                             
 
 /* Creates an Approximate Nearest Neighbors search tree.
@@ -44,7 +44,7 @@ static void similarity_sort(SIMSIM* sim, int cnt, int dir);
  * Notes:
  *   Annoy only keeps a reference to the data, it does not make a copy of it.
  *   The data used by Annoy must not change until after calling annoy_free().
- *   Internally Annoy uses the row indices of data to retrieve vectos.
+ *   Internally Annoy uses the row indices of data to retrieve vectors.
  *   Annoy uses vectors cosine similarity to compare vectors.
  */
 ANNOY* annoy_create(const fArr2D data, int num_vec, int vec_dim, int num_trees)
@@ -94,7 +94,7 @@ int annoy_most_similar(ANNOY* annoy, const fVec query, float search_q,
                                      int* similar, float* similarity, int topn)
 {
     int search_k = annoy->num_trees * topn;
-    SIMSIM* sim = allocmem(1,search_k,SIMSIM);
+    COSSIM* sim = allocmem(1,search_k,COSSIM);
     annoy->cos_sim_cnt = 0;
     int cnt = 0;
     for (int i = 0; i < annoy->num_trees; i++)
@@ -184,7 +184,7 @@ static inline void hyperplane(
         hpv[i] /= n;
 }
 
-/* Calculates the distance iof a data point from hypeplane that 
+/* Calculates the distance of a data point from hypeplane that 
  * passes through a midpoint.
  *
  * Parameters:
@@ -213,8 +213,8 @@ static inline float project(
 }
 
 /* Builds a search (sub)tree for the data vectors whose indices are passed
- * in the array pointed by dnx. The number of entries in the array is passed
- * in nvec. Returns the index of the tree's root node.
+ * in the array pointed by data_ix. The number of entries in the array is
+ * passed in nvec. Returns the index of the tree's root node.
  */
 static ANNOY_NODE_IX build_tree(ANNOY* annoy, int* data_ix, int nvec)
 {
@@ -278,16 +278,16 @@ static ANNOY_NODE_IX build_tree(ANNOY* annoy, int* data_ix, int nvec)
  *   node_ix - The index of a node that is the root of the (sub)tree.
  *   query   - Target vector, find data vectors most similar to it.
  *   similar - Array that receives tuples of the indices of the similar
- *             vectors and thei cosine similarity to the query vector.
+ *             vectors and the cosine similarity to the query vector.
  *   size    - Number of entries in similar array.
  *   cnt     - Number of entries in similar array that are already filled.
  *
  * Returns:
- *   The new number of entries in similar array that are filled.
+ *   The updated number of entries in similar array that are filled.
  */
 static int search_tree(ANNOY* annoy, ANNOY_NODE_IX node_ix, 
                        const fVec query, float search_q, 
-                       SIMSIM* similar, int size, int cnt)
+                       COSSIM* similar, int size, int cnt)
 {
     int D = annoy->vec_dim;
     typedef float (*ArrND)[D];
@@ -350,8 +350,8 @@ static int search_tree(ANNOY* annoy, ANNOY_NODE_IX node_ix,
 /* Sorts by similarity, then by vector index in ascending order */
 static int qsort_compare_asc(const void *a_, const void *b_)
 {
-    SIMSIM* a = (SIMSIM*)a_;
-    SIMSIM* b = (SIMSIM*)b_;
+    COSSIM* a = (COSSIM*)a_;
+    COSSIM* b = (COSSIM*)b_;
     if (a->cossim < b->cossim) return -1;
     if (a->cossim > b->cossim) return 1;
     if (a->data_ix < b->data_ix) return -1;
@@ -362,8 +362,8 @@ static int qsort_compare_asc(const void *a_, const void *b_)
 /* Sorts by similarity, then by vector index in descending order */
 static int qsort_compare_desc(const void *a_, const void *b_)
 {
-    SIMSIM* a = (SIMSIM*)a_;
-    SIMSIM* b = (SIMSIM*)b_;
+    COSSIM* a = (COSSIM*)a_;
+    COSSIM* b = (COSSIM*)b_;
     if (a->cossim < b->cossim) return 1;
     if (a->cossim > b->cossim) return -1;
     if (a->data_ix < b->data_ix) return 1;
@@ -375,8 +375,8 @@ static int qsort_compare_desc(const void *a_, const void *b_)
  * In the sorted array duplicate entries will be adjecant, so they 
  * can be easily removed.
  */
-static void similarity_sort(SIMSIM* sim, int cnt, int dir)
+static void similarity_sort(COSSIM* sim, int cnt, int dir)
 {
-    qsort(sim,cnt,sizeof(SIMSIM),((dir)?qsort_compare_desc:qsort_compare_asc));
+    qsort(sim,cnt,sizeof(COSSIM),((dir)?qsort_compare_desc:qsort_compare_asc));
 }
 
