@@ -95,7 +95,7 @@ int dedup_labels(iVec restrict labels, int len, int blank_inx)
  */
 int timit_lstm_dense_classification(
                         const char* loadmodel, const char* storemodel,
-                        int layers[], int layers_cnt, 
+                        int layers[], int layers_cnt, int rng_seed, 
                         int ctc_mode, char* optimizer, int batch_size,
                         float learning_rate, 
                         float weight_decay, 
@@ -113,6 +113,9 @@ int timit_lstm_dense_classification(
     const int N = REDUCED_PHONEME_CNT;  /* Output vector dimension          */
     int L = layers_cnt + 1;             /* Number of layers                 */
     int B = batch_size;                 /* Batch size                       */
+
+    init_lrng(rng_seed);
+    printf("Random number generator seed is %d\n",rng_seed);
 
     MODEL* m;
     if (loadmodel != NULL) {
@@ -155,7 +158,8 @@ int timit_lstm_dense_classification(
     if (schedule != NULL)
         printf("learning rate schedule %s \n",schedule);
     else
-        printf("learning rate %g, weight decay %g \n",learning_rate,weight_decay);
+        printf("learning rate %g, weight decay %g \n",
+                                                   learning_rate,weight_decay);
     printf("Using %s loss function\n\n",loss_func);
 
 
@@ -411,10 +415,10 @@ int main(int argc, char** argv)
       "             [-r <learning rate>] [-w weight decay] [-b <batch size>]\n"
       "             [-L 's1 s2 ...'] [-S e:lr:wd,e:lr:wd,...]               \n"
       "             [-l <model file>] [-s <model file>]                     \n"
-      "             [-ctc | -cross-entropy]                                 \n"
+      "             [-R <rng seed>] [-ctc | -cross-entropy]                 \n"
       "                                                                     \n"
       " -L: LSTM layer specification. One additional output layer           \n"
-      "     is implied. So for example -L '126 64' specifies two            \n"
+      "     is implied. So for example -L '128 64' specifies two            \n"
       "     LSTM layers followed by a Dense output layer.                   \n"
       "     Notice that the specification is quoted.                        \n"
       " -S: Learning rate schedule consisting of comma separated list of    \n"
@@ -426,15 +430,16 @@ int main(int argc, char** argv)
       "\n";
 
     int epochs = 21, bsize = -128; /* Nagative value indicates default value */
-    float lr = 0.001, wd = 0.01;
-    char *sch = "12:0.001:0.01,4:0.0001:0.01,5:0.00001:0";
+    float lr = 0.001, wd = 0.01;   /* Overridden by below sch */
+    char *sch = "6:0.001:0.02,8:0.001:0.01,4:0.0001:0.01,3:0.00001:0"; 
     char *loadfile = NULL, *storefile = NULL;
     #define maxlyrcnt 5
     int lyrcnt = 3;
     int layers[maxlyrcnt+1] = {128,128,128};
     int ctc_mode = 1;
+    int rng_seed = 42;
     int opt;
-    while ((opt = getopt(argc, argv, "e:r:w:b:l:s:L:S:c:h")) != -1) {
+    while ((opt = getopt(argc, argv, "e:l:s:b:r:w:L:S:R:c:h")) != -1) {
         switch (opt) {
             case 'h': printf(usage); exit(0);
             case 'e': epochs = atoi(optarg); break;
@@ -453,6 +458,7 @@ int main(int argc, char** argv)
                 }
             break;
             case 'S': sch = optarg; break;
+            case 'R': rng_seed = atoi(optarg); break;
             case 'c':
                 if (strcmp(optarg,"tc") == 0)
                     ctc_mode = 1;
@@ -472,8 +478,7 @@ int main(int argc, char** argv)
         }
     }
     int ok;
-    init_lrng(42);
     ok = timit_lstm_dense_classification(loadfile,storefile,layers,lyrcnt,
-                                      ctc_mode,"adamw",bsize,lr,wd,epochs,sch);
+                            rng_seed,ctc_mode,"adamw",bsize,lr,wd,epochs,sch);
     return (ok) ? 0 : -1;
 }
