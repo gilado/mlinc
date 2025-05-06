@@ -69,7 +69,7 @@ void dense_init(DENSE* l, int input_dim, int batch_size)
  *
  * Notes:
  *   If this function is called before dense_init(), it does nothing.
- *   The network's hidden state is resized and re-initialized
+ *   Otherwise, the network's hidden state is resized and re-initialized
  */
 void dense_set_batch_size(DENSE* l, int batch_size)
 {

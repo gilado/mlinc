@@ -65,7 +65,7 @@ void lstm_init(LSTM* l, int input_dim, int batch_size);
  *
  * Notes:
  *   If this function is called before ilstm_init(), it does nothing.
- *   The network's hidden states are resized and re-initialized
+ *   Otherwise, the network's hidden states are resized and re-initialized
  */
 void lstm_set_batch_size(LSTM* l, int batch_size);
 
@@ -208,7 +208,7 @@ static inline fArr2D lstm_forward(LSTM* restrict l,
 static inline void lstm_backward(LSTM* restrict l,
                                  const fArr2D restrict dY/*[B][S]*/, 
                                  const fArr2D restrict X/*[B][D]*/,
-                                 fArr2D* g/*Grsdient matrices*/,
+                                 fArr2D* g/*Gradient matrices*/,
                                  fArr2D restrict dX/*[B][D]*/,
                                  int lyr)
 {
