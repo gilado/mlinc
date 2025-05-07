@@ -1,321 +1,176 @@
-/* Copyright (c) 2023-2024 Gilad Odinak */
+/* Copyright (c) 2023-2025 Gilad Odinak */
+
+/* LPC to LSP conversion routines
+ * Reference https://www.ece.mcgill.ca/~pkabal/papers/1986/Kabal1986.pdf
+ */
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include "lsp.h"
 
-/* Very slightly modified: double instead of float, added wrapper functions  
- * Implementation of https://www.ece.mcgill.ca/~pkabal/papers/1986/Kabal1986.pdf
+/* eval_cheb_poly - Evaluate a Chebyshev polynomial using recurrence
+ *
+ * This function evaluates a Chebyshev polynomial of the first kind at
+ * a given point x. The polynomial is expressed in terms of Chebyshev
+ * basis functions T_n(x), and the coefficients are provided in coef[].
+ *
+ * The recurrence used is:
+ *     T_0(x) = 1
+ *     T_1(x) = x
+ *     T_n(x) = 2 * x * T_{n-1}(x) - T_{n-2}(x)  for n >= 2
+ *
+ * coef[] should contain (order / 2) + 1 elements, corresponding to the
+ * even-order Chebyshev polynomial derived from LPC analysis.
+ *
+ * Parameters:
+ *     coef  - array of Chebyshev coefficients, highest degree first
+ *     x     - value at which to evaluate the polynomial (in [-1, 1])
+ *     order - LPC order (must be even)
+ *
+ * Returns:
+ *     The value of the Chebyshev polynomial at x
  */
-
-/*---------------------------------------------------------------------------*\
-
-  FILE........: lsp.c
-  AUTHOR......: David Rowe
-  DATE CREATED: 24/2/93
-
-
-  This file contains functions for LPC to LSP conversion and LSP to
-  LPC conversion. Note that the LSP coefficients are not in radians
-  format but in the x domain of the unit circle.
-
-\*---------------------------------------------------------------------------*/
-
-/*
-  Copyright (C) 2009 David Rowe
-
-  All rights reserved.
-
-  This program is free software; you can redistribute it and/or modify
-  it under the terms of the GNU Lesser General Public License version 2.1, as
-  published by the Free Software Foundation.  This program is
-  distributed in the hope that it will be useful, but WITHOUT ANY
-  WARRANTY; without even the implied warranty of MERCHANTABILITY or
-  FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public
-  License for more details.
-
-  You should have received a copy of the GNU Lesser General Public License
-  along with this program; if not, see <http://www.gnu.org/licenses/>.
-*/
-
-/*---------------------------------------------------------------------------*\
-
-  Introduction to Line Spectrum Pairs (LSPs)
-  ------------------------------------------
-
-  LSPs are used to encode the LPC filter coefficients {ak} for
-  transmission over the channel.  LSPs have several properties (like
-  less sensitivity to quantisation noise) that make them superior to
-  direct quantisation of {ak}.
-
-  A(z) is a polynomial of order lpcrdr with {ak} as the coefficients.
-
-  A(z) is transformed to P(z) and Q(z) (using a substitution and some
-  algebra), to obtain something like:
-
-    A(z) = 0.5[P(z)(z+z^-1) + Q(z)(z-z^-1)]  (1)
-
-  As you can imagine A(z) has complex zeros all over the z-plane. P(z)
-  and Q(z) have the very neat property of only having zeros _on_ the
-  unit circle.  So to find them we take a test point z=exp(jw) and
-  evaluate P (exp(jw)) and Q(exp(jw)) using a grid of points between 0
-  and pi.
-
-  The zeros (roots) of P(z) also happen to alternate, which is why we
-  swap coefficients as we find roots.  So the process of finding the
-  LSP frequencies is basically finding the roots of 5th order
-  polynomials.
-
-  The root so P(z) and Q(z) occur in symmetrical pairs at +/-w, hence
-  the name Line Spectrum Pairs (LSPs).
-
-  To convert back to ak we just evaluate (1), "clocking" an impulse
-  thru it lpcrdr times gives us the impulse response of A(z) which is
-  {ak}.
-
-\*---------------------------------------------------------------------------*/
-
-/*---------------------------------------------------------------------------*\
-
-  FUNCTION....: cheb_poly_eva()
-  AUTHOR......: David Rowe
-  DATE CREATED: 24/2/93
-
-  This function evaluates a series of chebyshev polynomials
-
-\*---------------------------------------------------------------------------*/
-
-static double cheb_poly_eva(double *coef, double x, int order)
-/*  double coef[]    coefficients of the polynomial to be evaluated  */
-/*  double x         the point where polynomial is to be evaluated   */
-/*  int order       order of the polynomial             */
+static inline double eval_cheb_poly(const double coef[], double x, int order)
 {
-  int i;
-  double *t, *u, *v, sum;
   double T[(order / 2) + 1];
+  T[0] = 1.0;
+  T[1] = x;
+  for (int i = 2; i <= order / 2; i++)
+    T[i] = 2 * x * T[i - 1] - T[i - 2];
 
-  /* Initialise pointers */
-
-  t = T; /* T[i-2]          */
-  *t++ = 1.0;
-  u = t--; /* T[i-1]            */
-  *u++ = x;
-  v = u--; /* T[i]          */
-
-  /* Evaluate chebyshev series formulation using iterative approach     */
-
-  for (i = 2; i <= order / 2; i++)
-    *v++ = (2 * x) * (*u++) - *t++; /* T[i] = 2*x*T[i-1] - T[i-2]   */
-
-  sum = 0.0; /* initialise sum to zero  */
-  t = T;     /* reset pointer       */
-
-  /* Evaluate polynomial and return value also free memory space */
-
-  for (i = 0; i <= order / 2; i++) sum += coef[(order / 2) - i] * *t++;
+  double sum = 0.0;
+  for (int i = 0; i <= order / 2; i++)
+    sum += coef[(order / 2) - i] * T[i];
 
   return sum;
 }
 
-/*---------------------------------------------------------------------------*\
-
-  FUNCTION....: lpc_to_lsp()
-  AUTHOR......: David Rowe
-  DATE CREATED: 24/2/93
-
-  This function converts LPC coefficients to LSP coefficients.
-
-\*---------------------------------------------------------------------------*/
-
-static int lpc_to_lsp(double *a, int order, double *freq, int nb, double delta)
-/*  double *a                lpc coefficients            */
-/*  int order           order of LPC coefficients (10)      */
-/*  double *freq             LSP frequencies in radians          */
-/*  int nb          number of sub-intervals (4)         */
-/*  double delta         grid spacing interval (0.02)        */
+/* lpc2lsp - Convert LPC coefficients to LSP (Line Spectral Pair) frequencies
+ *
+ * This function converts a set of linear predictive coding (LPC) coefficients
+ * into their corresponding line spectral pair (LSP) frequencies using 
+ * Chebyshev polynomial root finding.
+ *
+ * It constructs the symmetric and antisymmetric polynomials (P and Q) from 
+ * the LPC coefficients, then searches for roots of these polynomials on the
+ * interval [-1, 1] using a grid search followed by bisection refinement.
+ *
+ * Parameters:
+ *     lpc   - input LPC coefficients, array of size order+1
+ *     lsp   - output array to store LSP frequencies in radians, size order+1
+ *     order - LPC order (must be even)
+ *
+ * Returns:
+ *     Number of roots found (should equal 'order' if successful)
+ *
+ * Note:
+ *     The number of bisections is 17.
+ *     The search interval step is 0.005.
+ */
+int lpc2lsp(const double lpc[], double lsp[], int order)
 {
-  double psuml, psumr, psumm, temp_xr, xl, xr, xm = 0;
-  double temp_psumr;
-  int i, j, m, flag, k;
-  double *px; /* ptrs of respective P'(z) & Q'(z)    */
-  double *qx;
-  double *p;
-  double *q;
-  double *pt;     /* ptr used for cheb_poly_eval()
-                    whether P' or Q'            */
-  int roots = 0; /* number of roots found           */
-  double Q[order + 1];
-  double P[order + 1];
+  const int bisectcnt = 17;  
+  const double step = 0.005;
+  double P[order + 1], Q[order + 1];
 
-  flag = 1;
-  m = order / 2; /* order of P'(z) & Q'(z) polynimials  */
-
-
-  /* determine P'(z)'s and Q'(z)'s coefficients where
-    P'(z) = P(z)/(1 + z^(-1)) and Q'(z) = Q(z)/(1-z^(-1)) */
-
-  px = P; /* initilaise ptrs */
-  qx = Q;
-  p = px;
-  q = qx;
-  *px++ = 1.0;
-  *qx++ = 1.0;
-  for (i = 1; i <= m; i++) {
-    *px++ = a[i] + a[order + 1 - i] - *p++;
-    *qx++ = a[i] - a[order + 1 - i] + *q++;
-  }
-  px = P;
-  qx = Q;
-  for (i = 0; i < m; i++) {
-    *px = 2 * *px;
-    *qx = 2 * *qx;
-    px++;
-    qx++;
-  }
-  px = P; /* re-initialise ptrs             */
-  qx = Q;
-
-  /* Search for a zero in P'(z) polynomial first and then alternate to Q'(z).
-  Keep alternating between the two polynomials as each zero is found    */
-
-  xr = 0;   /* initialise xr to zero        */
-  xl = 1.0; /* start at point xl = 1        */
-
-  for (j = 0; j < order; j++) {
+  for (int i = 0; i < order; i++) lsp[i] = 0.0;
   
-    if (j % 2) /* determines whether P' or Q' is eval. */
-      pt = qx;
-    else
-      pt = px;
+  P[0] = Q[0] = 1.0;
+  for (int i = 1; i <= order / 2; i++) {
+    P[i] = lpc[i] + lpc[order + 1 - i] - P[i - 1];
+    Q[i] = lpc[i] - lpc[order + 1 - i] + Q[i - 1];
+  }
+  for (int i = 0; i < order / 2; i++) {
+    P[i] *= 2.0;
+    Q[i] *= 2.0;
+  }
+  
+  int roots = 0;
+  double xl = -1.0, xm = 0.0, xr = 1.0;
+  for (int j = 0; j < order; j++) {
+    double *pq = (j % 2 == 0) ? P : Q;
+    double sl, sm, sr;
+    sr = eval_cheb_poly(pq,xr,order);
 
-    psuml = cheb_poly_eva(pt, xl, order); /* evals poly. at xl  */
-    flag = 1;
-    while (flag && (xr >= -1.0)) {
-      xr = xl - delta;                      /* interval spacing     */
-      psumr = cheb_poly_eva(pt, xr, order); /* poly(xl-delta_x)     */
-      temp_psumr = psumr;
-      temp_xr = xr;
+    while (xl >= -1.0) {
+      xl = xr - step;
+      sl = eval_cheb_poly(pq,xl,order);
 
-      /* if no sign change increment xr and re-evaluate
-         poly(xr). Repeat til sign change.  if a sign change has
-         occurred the interval is bisected and then checked again
-         for a sign change which determines in which interval the
-         zero lies in.  If there is no sign change between poly(xm)
-         and poly(xl) set interval between xm and xr else set
-         interval between xl and xr and repeat till root is located
-         within the specified limits  */
-
-      if (((psumr * psuml) < 0.0) || (psumr == 0.0)) {
-        roots++;
-
-        psumm = psuml;
-        for (k = 0; k <= nb; k++) {
-          xm = (xl + xr) / 2; /* bisect the interval    */
-          psumm = cheb_poly_eva(pt, xm, order);
-          if (psumm * psuml > 0.0) {
-            psuml = psumm;
-            xl = xm;
-          } else {
-            psumr = psumm;
+      if (sr * sl <= 0.0) {
+        sm = sr;
+        for (int k = 0; k < bisectcnt; k++) {
+          xm = (xr + xl) / 2;
+          sm = eval_cheb_poly(pq,xm,order);
+          if (sr * sm > 0.0) {
             xr = xm;
+            sr = sm;
+          } 
+          else {
+            xl = xm;
+            sl = sm;
           }
         }
-
-        /* once zero is found, reset initial interval to xr     */
-        freq[j] = (xm);
-        xl = xm;
-        flag = 0; /* reset flag for next search     */
-      } else {
-        psuml = temp_psumr;
-        xl = temp_xr;
-      }
+        lsp[j] = acos(xm);
+        xr = xm;
+        roots++;
+        break;
+      } 
+      sr = sl;
+      xr = xl;
     }
   }
-
-  /* convert from x domain to radians */
-  for (i = 0; i < order; i++)
-    freq[i] = acos(freq[i]);
-  return (roots);
+  return roots;
 }
 
-
-void lpc2lsp(double* lpc, double* lsp, int order)
+/* lsp2lpc - Convert Line Spectral Pairs to Linear Prediction Coefficients 
+ *
+ * This function transforms a set of LSP frequencies (in radians) into LPC
+ * coefficients using polynomial reconstruction. It constructs two real
+ * polynomials, P(z) and Q(z), from the LSPs, and combines them to produce
+ * the LPC prediction filter A(z).
+ *
+ * Arguments:
+ *   lsp   - array of LSP frequencies in radians (length = order)
+ *   lpc   - output array of LPC coefficients (length = order + 1)
+ *   order - order of the LPC filter (must be even)
+ *
+ * The LPC polynomial is computed using:
+ *   A(z) = 0.5 * [ (1 + z⁻¹) * P(z) + (1 - z⁻¹) * Q(z) ]
+ * where P(z) and Q(z) are constructed from the cosine of the LSP frequencies.
+ */
+void lsp2lpc(double lsp[], double lpc[], int order)
 {
-    for (int i = 0; i < order; i++) lsp[i] = 0.0;
-    lpc_to_lsp(lpc,order,lsp,16,0.005);
-}
-
-/*---------------------------------------------------------------------------*\
-
-  FUNCTION....: lsp_to_lpc()
-  AUTHOR......: David Rowe
-  DATE CREATED: 24/2/93
-
-  This function converts LSP coefficients to LPC coefficients.  In the
-  Speex code we worked out a way to simplify this significantly.
-
-\*---------------------------------------------------------------------------*/
-
-static void lsp_to_lpc(double *lsp, double *ak, int order)
-/*  double *freq         array of LSP frequencies in radians         */
-/*  double *ak       array of LPC coefficients           */
-/*  int order       order of LPC coefficients           */
-
-{
-  int i, j;
-  double xout1, xout2, xin1, xin2;
-  double *pw, *n1, *n2, *n3, *n4 = 0;
   double freq[order];
-  double Wp[(order * 4) + 2];
+  double Pz[order + 3], Qz[order + 3];
 
-  /* convert from radians to the x=cos(w) domain */
+  for (int i = 0; i < order; i++) 
+    freq[i] = cos(lsp[i]);
 
-  for (i = 0; i < order; i++) freq[i] = cos(lsp[i]);
+  for (int i = 0; i < order + 3; i++)
+    Pz[i] = Qz[i] = 0.0;
 
-  pw = Wp;
-
-  /* initialise contents of array */
-
-  for (i = 0; i < 4 * (order / 2) + 2; i++) { /* set contents of buffer to 0 */
-    *pw++ = 0.0;
-  }
-
-  /* Set pointers up */
-
-  pw = Wp;
-  xin1 = 1.0;
-  xin2 = 1.0;
-
-  /* reconstruct P(z) and Q(z) by cascading second order polynomials
-    in form 1 - 2xz(-1) +z(-2), where x is the LSP coefficient */
-
-  for (j = 0; j <= order; j++) {
-    for (i = 0; i < (order / 2); i++) {
-      n1 = pw + (i * 4);
-      n2 = n1 + 1;
-      n3 = n2 + 1;
-      n4 = n3 + 1;
-      xout1 = xin1 - 2 * (freq[2 * i]) * *n1 + *n2;
-      xout2 = xin2 - 2 * (freq[2 * i + 1]) * *n3 + *n4;
-      *n2 = *n1;
-      *n4 = *n3;
-      *n1 = xin1;
-      *n3 = xin2;
-      xin1 = xout1;
-      xin2 = xout2;
+  /* Reconstruct P(z) and Q(z) by evaluating the recursive form of
+   * y[n] = x[n] - 2 * x * y[n - 1] + y[n - 2]
+   */ 
+  double Pi = 1.0, Qi = 1.0;
+  for (int j = 0; j <= order; j++) {
+    double Po, Qo;
+    for (int i = 0; i < (order / 2); i++) {
+      Po = Pi - 2 * freq[2 * i] * Pz[i * 2] + Pz[i * 2 + 1];
+      Qo = Qi - 2 * freq[2 * i + 1] * Qz[i * 2] + Qz[i * 2 + 1];
+      Pz[i * 2 + 1] = Pz[i * 2];
+      Qz[i * 2 + 1] = Qz[i * 2];
+      Pz[i * 2] = Pi;
+      Qz[i * 2] = Qi;
+      Pi = Po;
+      Qi = Qo;
     }
-    xout1 = xin1 + *(n4 + 1);
-    xout2 = xin2 - *(n4 + 2);
-    ak[j] = (xout1 + xout2) * 0.5;
-    *(n4 + 1) = xin1;
-    *(n4 + 2) = xin2;
-
-    xin1 = 0.0;
-    xin2 = 0.0;
+    Po = Pi + Pz[order  + 2];
+    Qo = Qi - Qz[order  + 2];
+    lpc[j] = (Po + Qo) / 2;
+    Pz[order + 2] = Pi;
+    Qz[order + 2] = Qi;
+    Pi = 0.0;
+    Qi = 0.0;
   }
-}
-
-void lsp2lpc(double* lsp, double* lpc, int order)
-{
-    lsp_to_lpc(lsp,lpc,order);
 }
