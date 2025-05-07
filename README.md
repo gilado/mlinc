@@ -114,4 +114,4 @@ In the project root directory, run these commands:\
 
 ### License
 
-The use of this software is governed by the [LGPL license](LICENSE.md)
+The use of this software is governed by the [MIT license](LICENSE.md)
