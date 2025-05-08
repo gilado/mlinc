@@ -57,7 +57,7 @@ sizes. The function\'s array parameter is of generic type, and the
 actual number of rows and columns is passed as separate parameters. For
 better readability, the code makes extensive use of typedefs and casts
 so that inside a function the array elements are accessed in a natural
-way, i.e., as row and column subscripts, for eample A\[1\]\[2\]. See
+way, i.e., as row and column subscripts, for example A\[1\]\[2\]. See
 [array.h](src/numeric/array.h), for more details.\
 \
 The code generally uses heap memory to prevent stack overflow when
@@ -85,17 +85,18 @@ constructed, trained and used to make predictions.
 
 This code should compile and run on Linux and MacOS.\
 Clone the repository (or dwonload the source code) into a sub-directory
-for example \~/mlinc . In this directory youshould see a Makefile. run\
+for example \~/mlinc . In this directory will find a Makefile. run\
 `$ make`\
-The resulting programs will be in bin sub-directory. Try running\
+The resulting programs will be in bin sub-directory. Try running
+the memory allocation test program to verify binary compatibility\
 `$ bin/testmem`
 
 ### Plotting
 
 Some test programs use C bindings to Python matplotlib to display
-training results. This requires that Python and matplotlib be present
+training results. This requires that Python and matplotlib be present,
 see Plot.mk file for expected location of python libraries. Plotting can
-be turned off when compiling the code using the NOPLOT flag\
+be turned off when compiling the code, using the NOPLOT flag\
 `$ make NOPLOT=Yes`
 
 ### Obtainig test datasets
@@ -108,9 +109,9 @@ for use in test programs. For example:\
 
 In the project root directory, run these commands:\
 `$ bin/testmodel`\
+`$ bin/testembed`\
 `$ bin/har`\
-`$ bin/timit`\
-`$ bin/testembed`
+`$ bin/timit`
 
 ### License
 
