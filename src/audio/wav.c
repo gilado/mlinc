@@ -40,10 +40,10 @@ static void hdr2wf(WAVFILE* wf, const char* hdr)
 static void wf2hdr(char* hdr, const WAVFILE* wf)
 {
     WAVHDR wh = {
-        .riffHeader = "RIFF",
+        .riffHeader = {'R','I','F','F'},
         .fileSize = wf->dataSize + sizeof(WAVHDR) - 8,
-        .wavHeader = "WAVE",
-        .fmtHeader = "fmt ",
+        .wavHeader = {'W','A','V','E'},
+        .fmtHeader = {'f','m','t',' '},
         .fmtSize = 16,
         .audioFormat = wf->audioFormat,
         .numChannels = wf->numChannels,
@@ -51,7 +51,7 @@ static void wf2hdr(char* hdr, const WAVFILE* wf)
         .byteRate = wf->sampleRate * wf->numChannels * (wf->bitDepth / 8),
         .blockAlign = wf->numChannels * (wf->bitDepth / 8),
         .bitsPerSample = wf->bitDepth,
-        .dataHeader = "data",
+        .dataHeader = {'d','a','t','a'},
         .dataSize = wf->dataSize
     };
     memcpy(hdr,&wh,sizeof(wh));
