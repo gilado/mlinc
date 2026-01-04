@@ -36,7 +36,7 @@
 #define LPCORDER (FRAMEFEATCNT - 2) /* preceeded by zcr and sigma    */
 
 #ifndef __APPLE__
-static_assert (LPCORDER % 2 == 0);  /* LPC order must be even number */
+static_assert (LPCORDER % 2 == 0,"LPC order must be even number");
 #endif
 
 #define NUMPHN 64
@@ -188,7 +188,7 @@ int main(int argc, char **argv)
         /* Extract features from audio */
         frmcnt = 0;
         size_t fsize = winSize / 2;
-        for (int i = 0;; i++) {
+        for (;;) {
             float fltBuf[fsize];
             
             size_t fcnt = readSphereAudio(sfp,fltBuf,fsize);
@@ -397,7 +397,7 @@ size_t readPhonemeFile(PHNFILE* pf, size_t cnt, PHNINFO *phninfo)
             break;
         uint32_t startPos;
         uint32_t endPos;
-        char phoneme[4];
+        char phoneme[5];
         int e = sscanf(line,"%u %u %4s",&startPos,&endPos,phoneme);
         if (e < 3) {
             fprintf(stderr,"In readPhonemeFile(): malformed line '%s'\n",line);
