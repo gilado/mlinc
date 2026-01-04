@@ -25,8 +25,9 @@
 int test_dense_regression(const float range[3], 
                           const int layers[], int layers_cnt, char* optimizer,
                           float learning_rate, float weight_decay, int epochs)
-{    
-    float f(float x) { return (pow(x,2) + 10.0 * sin(x)); }
+{   
+    #undef f 
+    #define f(x) (pow(x,2) + 10.0 * sin(x))
     char* title = "f(x) = x**2 + 10* sin(x)";
     printf("\n\nTrains a Multi Layer Perceptron to predict "
            "the values of the function \n    %s\n\n",title);
@@ -113,7 +114,8 @@ int test_lstm_regression(const float range[3],
                          const int layers[], int layers_cnt, char* optimizer,
                          float learning_rate, float weight_decay, int epochs)
 {    
-    float f(float x) { return 0.6 * (sin(x) + 0.4 * sin(1.6 + 1.5 * x)); }
+    #undef f 
+    #define f(x) (0.6 * (sin(x) + 0.4 * sin(1.6 + 1.5 * x)))
     char* title = "f(x) = 0.6 * (sin(x) + 0.4 * sin(1.6 + 1.5 * x))";
     printf("\n\nTrains a Multi Layer LSTM to predict "
            "the values of the function \n    %s\n\n",title);
@@ -136,10 +138,10 @@ int test_lstm_regression(const float range[3],
     }
     /* Create Model (single batch of all samples) */
     MODEL* m = model_create(L,M,D,0,0); /* don't add bias, don't normalize */
-    model_add(m,lstm_create(layers[0],"sigmoid",1),"lstm");
+    model_add(m,lstm_create(layers[0],1),"lstm");
     for (int i = 1; i < L - 1; i++)
-        model_add(m,lstm_create(layers[i],"sigmoid",1),"lstm");
-    model_add(m,lstm_create(N,"sigmoid",1),"lstm"); 
+        model_add(m,lstm_create(layers[i],1),"lstm");
+    model_add(m,lstm_create(N,1),"lstm"); 
 
     model_compile(m,"mean-square-error",optimizer);
 
@@ -201,7 +203,8 @@ int test_lstm_dense_regression(const float range[3],
                            const int layers[], int layers_cnt, char* optimizer,
                            float learning_rate, float weight_decay, int epochs)
 {    
-    float f(float x) { return sin(x) + 0.4 * sin(1.6 + 1.5 * x); }
+    #undef f 
+    #define f(x) (sin(x) + 0.4 * sin(1.6 + 1.5 * x))
     char* title = "f(x) = sin(x) + 0.4 * sin(1.6 + 1.5 * x)";
     printf("\n\nTrains LSTM + final dense layer to predict "
            "the values of the function \n    %s\n\n",title);
@@ -227,9 +230,9 @@ int test_lstm_dense_regression(const float range[3],
     }
     /* Create Model */
     MODEL* m = model_create(L,B,D,0,1); /* don't add bias, normalize */
-    model_add(m,lstm_create(layers[0],"sigmoid",1),"lstm"); 
+    model_add(m,lstm_create(layers[0],1),"lstm"); 
     for (int i = 1; i < L - 1; i++)
-        model_add(m,lstm_create(layers[i],"sigmoid",1),"lstm");
+        model_add(m,lstm_create(layers[i],1),"lstm");
     model_add(m,dense_create(N,"none"),"dense"); 
 
     model_compile(m,"mean-square-error",optimizer);
@@ -364,8 +367,8 @@ int test_dense_classification(
     float yp[teCnt][N]; /* Output predictions */
     model_predict(m,xTe,yp,teCnt);
 
-    int cm[3][3];
-    memset(cm,0,3 * 3 * sizeof(int));
+    int cm[N][N];
+    memset(cm,0,N * N * sizeof(int));
 
     int* ytc = yc + trCnt + vdCnt; /* Test true class indcies */
     int  ypc[teCnt]; /* Test predicted class indecies */
@@ -381,10 +384,9 @@ int test_dense_classification(
             }
         }
         ypc[i] = pi;
-        if (ytc[i] == ypc[i]) {
-            cm[ytc[i]][ypc[i]]++;
+        cm[ytc[i]][ypc[i]]++;
+        if (ytc[i] == ypc[i])
             cnt++;
-        }
     }
     printf("Test accuracy %5.3f\n",((float) cnt) / teCnt);
     
@@ -574,9 +576,9 @@ int test_lstm_dense_classification(
         
     /* Create Model (multiple batches of B samples each) */
     MODEL* m = model_create(L,B,D,1,1); /* add bias, normalize */
-    model_add(m,lstm_create(layers[0],"sigmoid",1),"lstm"); 
+    model_add(m,lstm_create(layers[0],1),"lstm"); 
     for (int i = 1; i < L - 1; i++)
-        model_add(m,lstm_create(layers[i],"sigmoid",1),"lstm");
+        model_add(m,lstm_create(layers[i],1),"lstm");
     model_add(m,dense_create(N,"softmax"),"dense"); 
 
     model_compile(m,"cross-entropy",optimizer);
@@ -619,10 +621,9 @@ int test_lstm_dense_classification(
         for (int k = 1; k < N; k++)
             if (ay[k] > ay[ypc[i]])
                 ypc[i] = k;
-        if (ytc[i] == ypc[i]) {
-            cm[ytc[i]][ypc[i]]++;
+        cm[ytc[i]][ypc[i]]++;
+        if (ytc[i] == ypc[i])
             cnt++;
-        }
     }
     printf("Test accuracy %5.3f\n",((float) cnt) / STe);
     
@@ -703,7 +704,7 @@ int main(int argc, char** argv)
     if (tests[3]) {
         init_lrng(42);
         const int layers[2] = {12,12};
-        test_dense_classification(layers,2,"adamw",5,0.001,0.01,50);
+        test_dense_classification(layers,2,"linear",5,0.001,0.01,75);
     }
     if (tests[4]) {
         init_lrng(42);
