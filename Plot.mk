@@ -3,23 +3,18 @@
 CFLAGS += -DHAS_PLOT
 
 MPL_CC = g++
-MPL_CFLAGS = $(CFLAGS) -std=c++11 -Wno-deprecated-declarations -fpermissive
+MPL_CFLAGS = $(CFLAGS) -std=c++11 -Wno-deprecated-declarations -fpermissive 
+MPL_CFLAGS += -DWITHOUT_NUMPY
 
 PLOT_DIR = $(SRC_DIR)/plot
 
+PLOT_INC = -I$(shell python3 -c 'import sysconfig; print(sysconfig.get_path("include"))')
 ifeq ($(OSTYPE),macos)
-MPL_CFLAGS += -DWITHOUT_NUMPY
-OSPFX = /usr/local/Cellar
-PYPFX = $(OSPFX)/python@3.11/3.11.7_1/Frameworks/Python.framework/Versions/3.11
-PLOT_INC =  -I$(PYPFX)/include/python3.11
-PLOT_LIBS = -L$(PYPFX)/lib/python3.11/config-3.11-darwin/
-PY_LIB = -lpython3.11
+PLOT_LIBS = -L$(shell python3 -c 'import sysconfig; print(sysconfig.get_config_var("LIBPL"))')
 else
-MPL_CFLAGS += -DWITHOUT_NUMPY
-PLOT_INC = -I/usr/include//python3.10/
-PLOT_LIBS = -L/usr/lib64/python3.10/
-PY_LIB = -lpython3.10
+PLOT_LIBS = -L$(shell python3 -c 'import sysconfig; print(sysconfig.get_path("stdlib"))')
 endif
+PY_LIB = -lpython$(shell python3 -c 'import sysconfig; print(sysconfig.get_python_version())')
 
 INC_DIRS += $(PLOT_INC)
 LIB_DIRS += $(PLOT_LIBS)
