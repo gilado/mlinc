@@ -9,16 +9,6 @@
 #include "mem.h"
 #include "alignseq.h"
 
-static inline int maximum(int a, int b, int c) 
-{
-    int max = a;
-    if (b > max)
-        max = b;
-    if (c > max)
-        max = c;
-    return max;
-}
-
 static inline void reverse(int* s, int len)
 {
     for (int i = 0, j = len - 1; i < len / 2; i++, j--) {
