@@ -2,7 +2,7 @@
 ifneq ($(USEGCCENV),) # USEGCCENV is not blank - use gcc headers and libraries
 
 GCC_INCLUDE_DIRS := $(shell gcc -xc -E -v /dev/null 2>&1 | \
-    awk '/#include <...> search starts here:/{flag=1; next} \
+    awk '/#include \<...\> search starts here:/{flag=1; next} \
          /End of search list./{flag=0} flag {print "-isystem " $$1}')
 
 CFLAGS += -Wno-format-security
