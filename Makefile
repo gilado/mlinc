@@ -6,12 +6,15 @@ PROFILE =   # Set to yes to enable profiling support (disables inlining)
 USEDOUBLE = # Set to yes to use double precision math
 MARCH =     # Set to target architecture, if not same as this machine
 NOPLOT =    # Set to yes to disable plotting, and use of python matplotlib
+USECLANG=   # Set to yes to use clang instead of gcc
+USEGCCENV=  # Set to use gcc headers and libraries with clang
 
-CC = gcc # Compiler and linker
+CC = gcc
 LINK = g++
 
 # Environ.mk and Plot.mk add more flags to CFLAGS LFLAGS LIBS
 CFLAGS = -Wall -Wextra
+
 LFLAGS =
 LIBS = -lm
 
@@ -48,6 +51,10 @@ HDRS = $(shell find $(SRC_DIR) -name '*.h')
 AOBJS= $(patsubst $(SRC_DIR)/%.c,$(BUILD_DIR)/%.o,$(SRCS))
 OBJS = $(filter-out $(BUILD_DIR)/prog/%.o,$(filter-out \
                                               $(BUILD_DIR)/tests/%.o,$(AOBJS)))
+
+ifneq ($(USECLANG),) # USECLANG is not blank - use clang instead of gcc
+include Clang.mk
+endif
 
 include Environ.mk # OS and processor depndencies
 
