@@ -1,11 +1,10 @@
 
 ifneq ($(USEGCCENV),) # USEGCCENV is not blank - use gcc headers and libraries
 
-GCC_INCLUDE_DIRS := $(shell gcc -xc -E -v /dev/null 2>&1 | \
-    awk '/#include \<...\> search starts here:/{flag=1; next} \
+GCC_INCLUDE_DIRS := $(shell gcc -xc -xc++ -E -v /dev/null 2>&1 | \
+    awk '/#include <...> search starts here:/{flag=1; next} \
          /End of search list./{flag=0} flag {print "-isystem " $$1}')
 
-CFLAGS += -Wno-format-security
 INC_DIRS += $(GCC_INCLUDE_DIRS)
 
 GCC_PREFIX := $(shell gcc -print-file-name=crtbegin.o | sed 's|/crtbegin.o||')
@@ -18,5 +17,8 @@ LFLAGS += $(CLANG_B) $(CLANG_L)
 
 endif
 
+CFLAGS += -Wno-format-security -Wno-vla-cxx-extension
+
 CC = clang
-LINK = clang
+CPPC = clang++
+LINK = clang++

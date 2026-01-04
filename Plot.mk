@@ -2,9 +2,9 @@
 
 CFLAGS += -DHAS_PLOT
 
-MPL_CC = g++
+MPL_CC = $(CPPC)
 MPL_CFLAGS = $(CFLAGS) -std=c++11 -Wno-deprecated-declarations -fpermissive 
-MPL_CFLAGS += -DWITHOUT_NUMPY
+MPL_CFLAGS += -DWITHOUT_NUMPY -Wno-unused-parameter
 
 PLOT_DIR = $(SRC_DIR)/plot
 
@@ -21,6 +21,6 @@ LIB_DIRS += $(PLOT_LIBS)
 LIBS += -lstdc++ $(PY_LIB)
 $(BUILD_DIR)/%.o: $(SRC_DIR)/%.cpp
 	@mkdir -p $(dir $@)
-	$(MPL_CC) $(MPL_CFLAGS) $(PLOT_INC) -c -o $@ $<
+	$(MPL_CC) $(MPL_CFLAGS) $(INC_DIRS) -c -o $@ $<
 
 OBJS += $(BUILD_DIR)/plot/plot.o

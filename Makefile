@@ -10,6 +10,7 @@ USECLANG=   # Set to yes to use clang instead of gcc
 USEGCCENV=  # Set to use gcc headers and libraries with clang
 
 CC = gcc
+CPPC = g++
 LINK = g++
 
 # Environ.mk and Plot.mk add more flags to CFLAGS LFLAGS LIBS
