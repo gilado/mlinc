@@ -21,22 +21,15 @@
 LSTM* read_lstm(FILE* fp)
 {
     int D, S, B, b;
-    char c;
-    int cnt = fscanf(fp," LSTM D %d S %d B %d "
-                        "activation '%c' stateful %d\n",&D,&S,&B,&c,&b);
-    if (cnt < 5 || cnt == EOF) {
+    int cnt = fscanf(fp," LSTM D %d S %d B %d stateful %d\n",&D,&S,&B,&b);
+    if (cnt < 4 || cnt == EOF) {
         fprintf(stderr,"In read_lstm: failed to read header\n");
-        return NULL;
-    }
-    if (c != 'n' && c != 'r' && c != 's' && c != 'S') {
-        fprintf(stderr,"In read_lstm: invalid activation code\n");
         return NULL;
     }
     LSTM* l = allocmem(1,1,LSTM);
     l->S = S;
     l->D = D;
     l->B = B;
-    l->activation = c;
     l->stateful = (b) ? 1 : 0;
 
     l->f = allocmem(l->B,l->S,float);
@@ -119,8 +112,8 @@ err: /* error exit */
  */
 int write_lstm(const LSTM* l, FILE* fp)
 {
-    int cnt = fprintf(fp,"LSTM D %d S %d B %d activation '%c' stateful %d\n",
-                                     l->D,l->S,l->B,l->activation,l->stateful);
+    int cnt = fprintf(fp,"LSTM D %d S %d B %d stateful %d\n",
+                                     l->D,l->S,l->B,l->stateful);
     if (cnt <= 0 || cnt == EOF) {
         fprintf(stderr,"In write_lstm: failed to write the header\n");
         return 0;

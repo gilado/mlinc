@@ -18,7 +18,6 @@
  *
  * Parameters:
  *   units      - Number of cells (hidden size)
- *   activation - String, can be one of "none", "sigmoid", "relu", or "Softmax"
  *   stateful   - If not zero, maintain state across batches.
  * 
  * Returns:
@@ -28,20 +27,10 @@
  *   - The neural network needs to be further intialized using lstm_init()
  *     before it can be used.
  */
-LSTM* lstm_create(int units, char* activation, int stateful)
+LSTM* lstm_create(int units, int stateful)
 {
     LSTM* l = allocmem(1,1,LSTM);
     l->S = units;
-    if (!strcasecmp("none",activation)) l->activation = 'n';
-    if (!strcasecmp("sigmoid",activation)) l->activation = 's';
-    if (!strcasecmp("relu",activation)) l->activation = 'r';
-    if (!strcasecmp("softmax",activation)) l->activation = 'S';
-    if (l->activation == 0) {
-        freemem(l);
-        fflush(stdout);
-        fprintf(stderr,"lstm_create: invalid activation '%s'\n",activation);
-        exit(-1);
-    }
     l->stateful = stateful ? 1 : 0;
     return l;    
 }

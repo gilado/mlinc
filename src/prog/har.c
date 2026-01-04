@@ -328,9 +328,9 @@ int har_lstm_dense_classification(const char* loadmodel, const char* storemodel,
     else {
         /* Create Model (to process multiple batches of B samples each) */
         m = model_create(L,B,D,1,1); /* Notice adding bias to input */
-        model_add(m,lstm_create(layers[0],"sigmoid",stateful),"lstm"); 
+        model_add(m,lstm_create(layers[0],stateful),"lstm"); 
         for (int i = 1; i < L - 1; i++)
-            model_add(m,lstm_create(layers[i],"sigmoid",stateful),"lstm");
+            model_add(m,lstm_create(layers[i],stateful),"lstm");
         model_add(m,dense_create(N,"softmax"),"dense");
         model_compile(m,"cross-entropy",optimizer);
     }

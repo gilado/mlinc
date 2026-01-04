@@ -114,9 +114,6 @@ int timit_lstm_dense_classification(
     int L = layers_cnt + 1;             /* Number of layers                 */
     int B = batch_size;                 /* Batch size                       */
 
-    init_lrng(rng_seed);
-    printf("Random number generator seed is %d\n",rng_seed);
-
     MODEL* m;
     if (loadmodel != NULL) {
         m = load_model(loadmodel);
@@ -141,12 +138,15 @@ int timit_lstm_dense_classification(
         if (B < 0)
             B = -B;
         m = model_create(L,B,D,1,1); /* Notice adding bias to input */
-        model_add(m,lstm_create(layers[0],"sigmoid",1),"lstm"); 
+        model_add(m,lstm_create(layers[0],1),"lstm"); 
         for (int i = 1; i < L - 1; i++)
-            model_add(m,lstm_create(layers[i],"sigmoid",1),"lstm");
+            model_add(m,lstm_create(layers[i],1),"lstm");
         model_add(m,dense_create(N,"softmax"),"dense");
         model_compile(m,loss_func,optimizer);
     }
+
+    init_lrng(rng_seed);
+    printf("Random number generator seed is %d\n",rng_seed);
 
     printf("%d layers (including output layer) ",L);
     for (int i = 0; i < layers_cnt; i++)
@@ -155,7 +155,7 @@ int timit_lstm_dense_classification(
     printf("Input dimension %d. Expended input dimension %d. Batch size %d.\n",
                                                                        Dr,D,B);
     printf("%d epochs, ",epochs);
-    if (schedule != NULL)
+    if (learning_rate == 0 && schedule != NULL)
         printf("learning rate schedule %s \n",schedule);
     else
         printf("learning rate %g, weight decay %g \n",
@@ -167,8 +167,16 @@ int timit_lstm_dense_classification(
     char ls[40];    
     for (int i = 0, a = 0, n = layers_cnt; i < n; i++)
         a += snprintf(ls + a,sizeof(ls) - a,"%d%s",layers[i],((i<n-1)?"_":""));
-    char fns[100];
-    snprintf(fns,sizeof(fns),"e%d-b%d-r%g-w%g-L%s-pid-%d",
+    char fns[128];
+    if (learning_rate == 0 && schedule != NULL) {
+        snprintf(fns,sizeof(fns),"e%d-b%d-S%s-L%s-pid-%d",
+             epochs,batch_size,schedule,ls,getpid());
+        for (int i = 0; i < (int) sizeof(fns); i++)
+            if (fns[i] == ',')
+                fns[i] = '_';
+    }
+    else
+        snprintf(fns,sizeof(fns),"e%d-b%d-r%g-w%g-L%s-pid-%d",
              epochs,batch_size,learning_rate,weight_decay,ls,getpid());
              
     typedef float (*ArrMD)[D];
@@ -254,8 +262,8 @@ int timit_lstm_dense_classification(
 
     if (epochs > 0) {
         printf("%s Training...\n",date_time(datetimebuf));
-        char kwargs[512];
-        if (schedule != NULL && strlen(schedule) > 0)
+        char kwargs[256];
+        if (learning_rate == 0 && schedule != NULL && strlen(schedule) > 0)
             snprintf(kwargs,sizeof(kwargs),"schedule=%s verbose=2",schedule);
         else
             snprintf(kwargs,sizeof(kwargs),"verbose=2");
@@ -362,7 +370,7 @@ int timit_lstm_dense_classification(
     printf("Average similarity (with beam search) %5.3f\n",
                                                 1.0 - ((float) dist3) / len3);
     
-    char cmfn[256];
+    char cmfn[512];
     snprintf(cmfn,sizeof(cmfn),"cm-%s.csv",fns);
     printf("Writing confusion matrix to %s\n",cmfn);
     {
@@ -429,9 +437,10 @@ int main(int argc, char** argv)
       " -s: Store model in file at the end of training                      \n"
       "\n";
 
-    int epochs = 21, bsize = -128; /* Nagative value indicates default value */
-    float lr = 0.001, wd = 0.01;   /* Overridden by below sch */
-    char *sch = "6:0.001:0.02,8:0.001:0.01,4:0.0001:0.01,3:0.00001:0"; 
+    int epochs = 25;
+    int bsize = -128; /* Negative value indicates default value */
+    float lr = 0 /*0.001*/, wd = 0/*0.01*/;  /* If set, Overriddes below sch */
+    char *sch = "15:0.001:0.02,5:0.001:0.01,5:0.0001:0.01";
     char *loadfile = NULL, *storefile = NULL;
     #define maxlyrcnt 5
     int lyrcnt = 3;
@@ -459,7 +468,7 @@ int main(int argc, char** argv)
             break;
             case 'S': sch = optarg; break;
             case 'R': rng_seed = atoi(optarg); break;
-            case 'c':
+            case 'c': /* optarg contains the option string sans first character */
                 if (strcmp(optarg,"tc") == 0)
                     ctc_mode = 1;
                 else

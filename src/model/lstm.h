@@ -1,5 +1,5 @@
 /* Copyright (c) 2023-2024 Gilad Odinak */
-/* LSTM (reccurent) neural network  layer data structures and functions */
+/* LSTM (reccurent) neural network layer data structures and functions */
 #ifndef LSTM_H
 #define LSTM_H
 #include "array.h"
@@ -9,7 +9,6 @@ typedef struct lstm_s {
   int D;           /* Input vector dimension (including bias)       */
   int S;           /* Number of units, size of hidden state         */
   int B;           /* Number of input vectors in a batch            */
-  char activation; /* n(one) s(igmoid) r(elu) (S)oftmax             */
   int stateful;    /* 1: maintain state between batches             */
   fArr2D Wf;       /* Weights matrix [D][S]                         */
   fArr2D Wi;       /* Weights matrix [D][S]                         */
@@ -33,7 +32,6 @@ typedef struct lstm_s {
  *
  * Parameters:
  *   units      - Number of cells (hidden size)
- *   activation - String, can be one of "none", "sigmoid", "relu", or "Softmax"
  *   stateful   - If not zero, maintain state across batches.
  * 
  * Returns:
@@ -43,7 +41,7 @@ typedef struct lstm_s {
  *   - The neural network needs to be further intialized using lstm_init()
  *     before it can be used.
  */
-LSTM* lstm_create(int units, char* activation, int stateful);
+LSTM* lstm_create(int units, int stateful);
 
 /* Initializes an LSTM neural network created by lstm_create().
  *
@@ -83,6 +81,11 @@ void lstm_free(LSTM* l);
  */
 void lstm_reset(LSTM* l);
 
+static inline void lstm_activate(fVec v, int S)
+{
+   sigmoid((fArr2D)v,1,S);
+}
+
 /* Performs LSTM layer training/prediction's forward pass.
  *
  * Parameters:
@@ -98,23 +101,15 @@ void lstm_reset(LSTM* l);
  *   In a multi-layered neural network, after the first layer,
  *   X is the (activated) output of a previous layer.
  */
-static inline fArr2D lstm_forward(LSTM* restrict l, 
+static inline fArr2D lstm_forward(LSTM* restrict l,
                                   const fArr2D restrict X /*[B][D]*/, int lyr)
 {
     (void) lyr;
-    inline void activate(fVec v, int S, char activation)
-    {
-        switch (activation) {
-           case 's' : sigmoid((fArr2D)v,1,S); break;
-           case 'r' : relu((fArr2D)v,1,S); break;
-           case 'S' : softmax((fArr2D)v,1,S); break;
-        }
-    }
     const int D = l->D;
     const int S = l->S;
     const int B = l->B;
     typedef float (*ArrTD)[D];
-    ArrTD x = (ArrTD) X; 
+    ArrTD x = (ArrTD) X;
     /* Clear state. Note that for arrays with B+1 rows row t is the state
      * at time step t-1. Addvance the local pointers accordingly.
      */
@@ -149,33 +144,38 @@ static inline fArr2D lstm_forward(LSTM* restrict l,
 
     for (int t = 0; t < B; t++) {
         /* f[t] = activate(X[t] @ Wf + h[t-1] * Uf) */
-        addvecmatmul(f[t],x[t],l->Wf,D,S);    
+        addvecmatmul(f[t],x[t],l->Wf,D,S);
         addvecmatmul(f[t],h[t-1],l->Uf,S,S);
-        activate(f[t],S,l->activation);
+        lstm_activate(f[t],S);
         /* i[t] = activate(X[t] @ Wi + h[t-1] * Ui) */
-        addvecmatmul(i[t],x[t],l->Wi,D,S);    
+        addvecmatmul(i[t],x[t],l->Wi,D,S);
         addvecmatmul(i[t],h[t-1],l->Ui,S,S);
-        activate(i[t],S,l->activation);
+        lstm_activate(i[t],S);
         /* o[t] = activate(X[t] @ Wo + h[t-1] * Uo) */
-        addvecmatmul(o[t],x[t],l->Wo,D,S);    
+        addvecmatmul(o[t],x[t],l->Wo,D,S);
         addvecmatmul(o[t],h[t-1],l->Uo,S,S);
-        activate(o[t],S,l->activation);
+        lstm_activate(o[t],S);
         /* cc[t] = tanh(X[t] @ Wc + h[t-1] @ Uc) */
-        addvecmatmul(cc[t],x[t],l->Wc,D,S);    
+        addvecmatmul(cc[t],x[t],l->Wc,D,S);
         addvecmatmul(cc[t],h[t-1],l->Uc,S,S);
         for (int j = 0; j < S; j++)
             cc[t][j] = tanh(cc[t][j]);
-        /* c[t] = f[t] * c[t-1] + i[t] * cc[t] */ /* REVIEW - not cc[t-1] ? */
+        /* c[t] = f[t] * c[t-1] + i[t] * cc[t] */
         for (int j = 0; j < S; j++)
             c[t][j] = f[t][j] * c[t-1][j] + i[t][j] * cc[t][j];
         /* h[t] = o[t] * tanh(c[t])  */
-        for (int i = 0; i < l->S; i++)
-            h[t][i] = o[t][i] * tanh(c[t][i]);
+        for (int j = 0; j < l->S; j++)
+            h[t][j] = o[t][j] * tanh(c[t][j]);
     }
     /* Save last time step cell and hidden state for next batch of data */
-    fltcpy(l->ph,h[B-1],S); 
-    fltcpy(l->pc,c[B-1],S); 
+    fltcpy(l->ph,h[B-1],S);
+    fltcpy(l->pc,c[B-1],S);
     return h;
+}
+
+static inline float lstm_d_activate(float x)
+{
+    return d_sigmoid_1(x);
 }
 
 /* Performs LSTM layer training's backward pass.
@@ -187,7 +187,6 @@ static inline fArr2D lstm_forward(LSTM* restrict l,
  *          vectors, and D is the number of features in each vector
  *   g    - Array of 8 gradient matrices Wf Wi Wc Wo Uf Ui Uc Uo of the 
  *          same dimensions as their corresponding weight matrices
- *   activation - String, can be one of "none", "sigmoid", or "relu"
  *   dX   - Output parameter for the input vector gradient (if not NULL)
  *   lyr  - Ordinal number of this layer in a model (not used)
  * 
@@ -206,28 +205,18 @@ static inline fArr2D lstm_forward(LSTM* restrict l,
  *     dy (previous layer's S)
  */
 static inline void lstm_backward(LSTM* restrict l,
-                                 const fArr2D restrict dY/*[B][S]*/, 
+                                 const fArr2D restrict dY/*[B][S]*/,
                                  const fArr2D restrict X/*[B][D]*/,
                                  fArr2D* g/*Gradient matrices*/,
                                  fArr2D restrict dX/*[B][D]*/,
                                  int lyr)
 {
     (void) lyr;
-    inline float d_activate(float x, char activation)
-    {
-        switch (activation) {
-           case 's' : return d_sigmoid_1(x);
-           case 'r' : return d_relu_1(x);
-           /* REVIEW: applying d_softmax() degrades convergence - why? */
-           /* case 'S' : return d_softmax_1(x); // y = x * (yt - x); break; */
-        }
-        return x;
-    }
     const int D = l->D;
     const int S = l->S;
     const int B = l->B;
     typedef float (*ArrBD)[D];
-    ArrBD x = (ArrBD) X; 
+    ArrBD x = (ArrBD) X;
     ArrBD dx = (ArrBD) dX;
     typedef float (*ArrBS)[S];
     ArrBS dy = (ArrBS) dY;
@@ -236,7 +225,7 @@ static inline void lstm_backward(LSTM* restrict l,
     ArrBS i = (ArrBS) l->i;
     ArrBS o = (ArrBS) l->o;
     typedef float (*ArrB1S)[S];
-    ArrBS cc = ((ArrB1S) l->cc)+ 1;
+    ArrBS cc = ((ArrB1S) l->cc) + 1;
     ArrBS c = ((ArrB1S) l->c) + 1;
     ArrBS h = ((ArrB1S) l->h) + 1;
     /* Layer's gradients */
@@ -270,7 +259,7 @@ static inline void lstm_backward(LSTM* restrict l,
         /* Update output gate gradient */
         float do_[S]; /* 'do' is a C keyword, use do_ for variable name */
         for (int j = 0; j < S; j++)
-            do_[j] = dh[j] * tanh(c[t][j]) * d_activate(o[t][j],l->activation);
+            do_[j] = dh[j] * tanh(c[t][j]) * lstm_d_activate(o[t][j]);
         addoutermul(gWo,x[t],do_,D,S);
         addoutermul(gUo,h[t-1],do_,S,S);
         /* Update cell state gradient */
@@ -285,21 +274,21 @@ static inline void lstm_backward(LSTM* restrict l,
          */
         float dcc[S];
         for (int j = 0; j < S; j++)
-            dcc[j] = dc[j] * i[t][j] * d_tanh_x(cc[t][j]); /* REVIEW - not cc[t-1] */
+            dcc[j] = dc[j] * i[t][j] * d_tanh_x(cc[t][j]);
         addoutermul(gWc,x[t],dcc,D,S);
         addoutermul(gUc,h[t-1],dcc,S,S);
 
         /* Update input gate gradient */
         float di[S];
         for (int j = 0; j < S; j++)
-            di[j] = dc[j] * cc[t][j] * d_activate(i[t][j],l->activation); /* REVIEW - not cc[t-1] */
+            di[j] = dc[j] * cc[t][j] * lstm_d_activate(i[t][j]);
         addoutermul(gWi,x[t],di,D,S);
         addoutermul(gUi,h[t-1],di,S,S);
 
         /* Update forget gate gradient */
         float df[S];
         for (int j = 0; j < S; j++)
-            df[j] = dc[j] * c[t-1][j] * d_activate(f[t][j],l->activation);
+            df[j] = dc[j] * c[t-1][j] * lstm_d_activate(f[t][j]);
         addoutermul(gWf,x[t],df,D,S);
         addoutermul(gUf,h[t-1],df,S,S); 
         
@@ -319,8 +308,5 @@ static inline void lstm_backward(LSTM* restrict l,
             addinnermul(dx[t],do_,l->Wo,D,S);
         }
     }
-    /* Save last time step cell and hidden state for next batch of data */
-    fltcpy(l->ph,h[B-1],S); 
-    fltcpy(l->pc,c[B-1],S); 
 }
 #endif
