@@ -20,10 +20,10 @@
  * range[1] - highest input (x) value (exclusive)
  * range[2] - increment between x values
  */
+static inline float f(float x) { return 0.6 * (sin(x) + 0.4 * sin(1.6 + 1.5 * x)); }
 int test_lstm(const float range[3], const int layers[], int layers_cnt,
                           float learning_rate, float weight_decay, int epochs)
 {    
-    float f(float x) { return 0.6 * (sin(x) + 0.4 * sin(1.6 + 1.5 * x)); }
     char* title = "f(x) = 0.6 * (sin(x) + 0.4 * sin(1.6 + 1.5 * x))";
     const int L = layers_cnt + 1;
     const int M = (int) ((range[1] - range[0]) / range[2] + 0.5);
@@ -44,8 +44,8 @@ int test_lstm(const float range[3], const int layers[], int layers_cnt,
     /* Create layers */
     LSTM* l[L];
     for (int j = 0; j < L - 1; j++)
-        l[j] = lstm_create(layers[j],"sigmoid",1);
-    l[L - 1] = lstm_create(N,"sigmoid",1);
+        l[j] = lstm_create(layers[j],1);
+    l[L - 1] = lstm_create(N,1);
 
     /* Initialize layers */
     lstm_init(l[0],D,M);

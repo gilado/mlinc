@@ -24,7 +24,6 @@ static void dense_update_lin(fArr2D Wx_,fArr2D gWx_,float lr,int D, int S);
 int test_dense(const float range[3], const int layers[], int layers_cnt,
                                                float learning_rate, int epochs)
 {    
-    float f(float x) { return (pow(x,2) + 10.0 * sin(x)); }
     char* title = "f(x) = (x**2 + 10* sin(x))";
     const int L = layers_cnt + 1;
     const int M = (int) ((range[1] - range[0]) / range[2] + 0.5);
@@ -39,7 +38,7 @@ int test_dense(const float range[3], const int layers[], int layers_cnt,
     for (int i = 0; i < M ; i++) {
         X[i][0] = x;
         X[i][1] = 1.0;
-        yt[i][0] = f(x);
+        yt[i][0] = (pow(x,2) + 10.0 * sin(x));
         x += range[2];
     }
     /* Create layers */
