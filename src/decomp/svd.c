@@ -101,7 +101,7 @@ static void svd_tall(int m, int n, fArr2D a_/*[m][n]*/,
     float eps = SVD_EPS;
     int max_iter = MAX_ITER;
 
-    int i, j, k, l;
+    int i, j, k;
     float c, f, g, h, s, x, y, z;
 
     float e[n];
@@ -116,7 +116,6 @@ static void svd_tall(int m, int n, fArr2D a_/*[m][n]*/,
     g = x = 0.0;
     for (i = 0; i < n; i++) {
         e[i] = g;
-        l = i + 1;
 
         s = 0.0;
         for (j = i; j < m; j++)
@@ -130,7 +129,7 @@ static void svd_tall(int m, int n, fArr2D a_/*[m][n]*/,
             h = f * g - s;
             u[i][i] = f - g;
 
-            for (j = l; j < n; j++) {
+            for (j = i + 1; j < n; j++) {
                 s = 0.0;
                 for (k = i; k < m; k++)
                     s += u[k][i] * u[k][j];
@@ -143,26 +142,26 @@ static void svd_tall(int m, int n, fArr2D a_/*[m][n]*/,
 
         q[i] = g;
         s = 0.0;
-        for (j = l; j < n; j++)
+        for (j = i + 1; j < n; j++)
             s += u[i][j] * u[i][j];
 
         if (s < tol)
             g = 0.0;
-        else {
+        else if (i + 1 < n) {
             f = u[i][i + 1];
             g = (f < 0.0) ? sqrt(s) : -sqrt(s);
             h = f * g - s;
 
             u[i][i + 1] = f - g;
-            for (j = l; j < n; j++)
+            for (j = i + 1; j < n; j++)
                 e[j] = u[i][j] / h;
 
-            for (j = l; j < m; j++) {
+            for (j = i + 1; j < m; j++) {
                 s = 0.0;
-                for (k = l; k < n; k++)
+                for (k = i + 1; k < n; k++)
                     s += u[j][k] * u[i][k];
 
-                for (k = l; k < n; k++)
+                for (k = i + 1; k < n; k++)
                     u[j][k] += s * e[k];
             }
         }
@@ -173,44 +172,43 @@ static void svd_tall(int m, int n, fArr2D a_/*[m][n]*/,
     }
 
     /* accumulation of right-hand transformations */
-    l = n;
-    if (vt_ != NULL)
-    for (i = n - 1; i >= 0; i--) {
-        if (g != 0.0) {
-            h = u[i][i + 1] * g;
-            for (j = l; j < n; j++)
-                vt[i][j] = u[i][j] / h;
+    if (vt_ != NULL) {
+        fltclr(vt,n * n);
+        for (i = n - 1; i >= 0; i--) {
+            if (g != 0.0 && i + 1 < n) {
+                h = u[i][i + 1] * g;
+                for (j = i + 1; j < n; j++)
+                    vt[i][j] = u[i][j] / h;
 
-            for (j = l; j < n; j++) {
-                s = 0.0;
-                for (k = l; k < n; k++)
-                    s += u[i][k] * vt[j][k];
+                for (j = i + 1; j < n; j++) {
+                    s = 0.0;
+                    for (k = i + 1; k < n; k++)
+                        s += u[i][k] * vt[j][k];
 
-                for (k = l; k < n; k++)
-                    vt[j][k] += s * vt[i][k];
+                    for (k = i + 1; k < n; k++)
+                        vt[j][k] += s * vt[i][k];
+                }
             }
-        }
-        for (j = l; j < n; j++)
-            vt[j][i] = vt[i][j] = 0.0;
+            for (j = i + 1; j < n; j++)
+                vt[j][i] = vt[i][j] = 0.0;
 
-        vt[i][i] = 1.0;
-        g = e[i];
-        l = i;
+            vt[i][i] = 1.0;
+            g = e[i];
+        }
     }
 
     /* accumulation of left-hand transformations */
     if (u_ != NULL || vt_ == NULL)
     for (i = n - 1; i >= 0; i--) {
         g = q[i];
-        l = i + 1;
-        for (j = l; j < n; j++)
+        for (j = + i + 1; j < n; j++)
             u[i][j] = 0.0;
 
         if (g != 0.0) {
             h = u[i][i] * g;
-            for (j = l; j < n; j++) {
+            for (j = i + 1; j < n; j++) {
                 s = 0.0;
-                for (k = l; k < m; k++)
+                for (k = i + 1; k < m; k++)
                     s += u[k][i] * u[k][j];
 
                 f = s / h;
@@ -233,9 +231,9 @@ static void svd_tall(int m, int n, fArr2D a_/*[m][n]*/,
     for (k = n - 1; k >= 0; k--) {
         /* test for splitting */
         for (int iter = 0; iter < max_iter; iter++) {
+            int l = k;
             /* convergence test */
             for (int once = 1; once > 0; once--) {
-
                 /* Note: in the paper, in this loop, l reaches 0 => bug */
                 for (l = k; l > 0; l--) {
                     if (fabsf(e[l]) <= eps)
