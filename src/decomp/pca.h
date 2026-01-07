@@ -12,7 +12,7 @@
  *
  * https://en.wikipedia.org/wiki/Principal_component_analysis
  * 
- * A  - an array mxn of m observations, each having n features.
+ * A  - an array mxn of m observations, each having n features, m >= n
  * nc - the desired number of principal components.
  * R  - a reduced array mxnc of m observations, each having nc components
  *
@@ -25,6 +25,8 @@
 static inline void PCA(const fArr2D A/*[m][n]*/, 
                        fArr2D R/*[m][nc]*/, int m, int n, int nc)
 {
+    if (m < n)
+        return;
     if (nc <= 0)
         return;
     if (nc > n)
@@ -33,7 +35,7 @@ static inline void PCA(const fArr2D A/*[m][n]*/,
     fVec   S  = allocmem(1,n,float);
     fArr2D Vt = allocmem(n,n,float);
     SVD(A,U,S,Vt,m,n);
-    /* Vt has n rows, multiply by only the transponsed first nc rows of Vt */
+    /* Vt has n rows, multiply by only the transposed first nc rows of Vt */
     matmulT(R,A,Vt,m,n,nc);
     freemem(U);
     freemem(S);
