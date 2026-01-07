@@ -117,9 +117,9 @@ int full_test()
 {
     int ok = 1;
     float eps = 1e-5;
-    for (int t = 0; t < 100; t++) {
-        const int M = (int) (urand(2,100) + 0.5);
-        const int N = (int) (urand(2,100) + 0.5);
+    for (int t = 0; t < 400; t++) {
+        const int M = (int) (urand(2,400) + 0.5);
+        const int N = (int) (urand(2,400) + 0.5);
         const int D = (M < N) ? M : N;
         float A[M][N];
         float mean = urand(-3,3);
