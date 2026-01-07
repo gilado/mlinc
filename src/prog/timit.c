@@ -442,7 +442,7 @@ int main(int argc, char** argv)
     float lr = 0 /*0.001*/, wd = 0/*0.01*/;  /* If set, Overriddes below sch */
     char *sch = "15:0.001:0.02,5:0.001:0.01,5:0.0001:0.01";
     char *loadfile = NULL, *storefile = NULL;
-    #define maxlyrcnt 5
+    #define maxlyrcnt 9
     int lyrcnt = 3;
     int layers[maxlyrcnt+1] = {128,128,128};
     int ctc_mode = 1;
@@ -458,8 +458,9 @@ int main(int argc, char** argv)
             case 'r': lr = atof(optarg); break;
             case 'w': wd = atof(optarg); break;
             case 'L': 
-                lyrcnt = sscanf(optarg,"%d %d %d %d %d %d",&layers[0],
-                      &layers[1],&layers[2],&layers[3],&layers[4],&layers[4]);
+                lyrcnt = sscanf(optarg,"%d %d %d %d %d %d %d %d %d %d",&layers[0],
+                      &layers[1],&layers[2],&layers[3],&layers[4],&layers[5],
+                      &layers[6],&layers[7],&layers[8],&layers[8]);
                 if (lyrcnt > maxlyrcnt) {
                     fprintf(stderr,"timit: too many LSTM layers\n");
                     printf(usage);
