@@ -48,7 +48,7 @@ static const int har2reduced[HAR_CLASS_CNT] = {
     3,/* 6 stand2sit*/
     4,/* 7 sit2stand*/
     5,/* 8 sit2lie*/
-    4,/* 9 lie2sit*/
+    3,/* 9 lie2sit*/
     5,/*10 stand2lie*/
     4 /*11 lie2stand*/
 };
@@ -425,7 +425,7 @@ int main(int argc, char** argv)
         " -s: Store model in file at the end of training                \n"
         "\n";
 
-    int epochs = 4, bsize = 64, tbsize = 64;
+    int epochs = 8, bsize = 64, tbsize = 64;
     float lr = 0.0001, wd = 0.1;
     char *loadfile = NULL, *storefile = NULL;
     int lyrcnt = 2;
