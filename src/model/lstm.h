@@ -1,5 +1,5 @@
 /* Copyright (c) 2023-2024 Gilad Odinak */
-/* LSTM (reccurent) neural network layer data structures and functions */
+/* LSTM (reccurrent) neural network layer data structures and functions */
 #ifndef LSTM_H
 #define LSTM_H
 #include "array.h"
@@ -9,7 +9,12 @@ typedef struct lstm_s {
   int D;           /* Input vector dimension (including bias)       */
   int S;           /* Number of units, size of hidden state         */
   int B;           /* Number of input vectors in a batch            */
+  /* Note that B also is the sequence length (number of time steps) */
   int stateful;    /* 1: maintain state between batches             */
+  /* Stateful mode preserves the final hidden and cell state across
+   * forward passes only. Gradients do NOT propagate across sequences
+   * (i.e., truncated BPTT with truncation at sequence boundaries).
+   */
   fArr2D Wf;       /* Weights matrix [D][S]                         */
   fArr2D Wi;       /* Weights matrix [D][S]                         */
   fArr2D Wc;       /* Weights matrix [D][S]                         */
@@ -38,7 +43,7 @@ typedef struct lstm_s {
  *   Pointer to an LSTM neural network layer.
  *
  * Notes:
- *   - The neural network needs to be further intialized using lstm_init()
+ *   - The neural network needs to be further initialized using lstm_init()
  *     before it can be used.
  */
 LSTM* lstm_create(int units, int stateful);
@@ -98,7 +103,7 @@ static inline void lstm_activate(fVec v, int S)
  *   Pointer to the predicted values.
  * 
  * Note:
- *   In a multi-layered neural network, after the first layer,
+ * - In a multi-layered neural network, after the first layer,
  *   X is the (activated) output of a previous layer.
  */
 static inline fArr2D lstm_forward(LSTM* restrict l,
@@ -110,8 +115,18 @@ static inline fArr2D lstm_forward(LSTM* restrict l,
     const int B = l->B;
     typedef float (*ArrTD)[D];
     ArrTD x = (ArrTD) X;
-    /* Clear state. Note that for arrays with B+1 rows row t is the state
-     * at time step t-1. Addvance the local pointers accordingly.
+    /* Note that for arrays with B+1 rows row t is the state at time step t-1.
+     * Arrays cc, c, h are allocated with (B + 1) rows.
+     *
+     * Logical indexing:
+     *    index -1 : previous time step (t = -1)
+     *    index  0 : time step 0
+     *    index B-1: last time step
+     *
+     * The pointer is advanced by +1 so that h[-1], c[-1], cc[-1]
+     * refer to row 0 of the allocated buffer.
+     *
+     * This allows uniform access to t-1 without conditionals.
      */
     fltclr(l->f,B*S);
     fltclr(l->i,B*S);
@@ -199,6 +214,8 @@ static inline float lstm_d_activate(float x)
  *   - Calculates the input vector gradient and returns it in dx, if dx is 
  *     not NULL
  *   - Calculates and returns nh and nc
+ *   - When stateful is enabled, forward state is carried across calls,
+ *     but gradients do not propagate across sequence boundaries.
  *   - In a multi-layered neural network, except the last layer, dy is the 
  *     gradient of the previous layer's input (dx), thus, the dimension of 
  *     dx (this layer's D) must equal the dimension of the previous layer's
