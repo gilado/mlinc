@@ -41,11 +41,9 @@ void QR(fArr2D M_/*[m][n]*/,
     typedef float (*ArrMM)[m];
     typedef float (*ArrMN)[n];
     typedef float(*VecM);
+
     ArrMM Q = allocmem(m,m,float);
     ArrMN R = allocmem(m,n,float);
-    ArrMM Qk = allocmem(m,m,float);
-    ArrMN Rr = allocmem(m,n,float);
-    ArrMM Qr = allocmem(m,m,float);
     VecM x = allocmem(1,m,float);
     VecM v = allocmem(1,m,float);
 
@@ -60,11 +58,12 @@ void QR(fArr2D M_/*[m][n]*/,
         fltclr(x,m - k);
         for (int i = 0, j = k; j < m; i++, j++)
             x[i] = R[j][k];
-        /* Construct the householder vector
-         * v = x + sign(x[0]) * ||x|| * e
-         * where 
-         * sign(x): (x < 0) ? -1 : 1
-         * e = [1,0,0,..]
+
+        /* Construct the Householder vector
+         * v = x + sign(x[0]) * ||x|| * e1
+         * where
+         * sign(x[0]) = (x[0] < 0) ? -1 : 1
+         * e1 = [1,0,0,...]
          */
         fltclr(v,m - k);
         v[0] = vecnorm(x,m - k);
@@ -76,25 +75,26 @@ void QR(fArr2D M_/*[m][n]*/,
         float vn = vecnorm(v,m - k);
         for (int i = 0; i < m - k; i++)
             v[i] /= vn;
-        /* Compute the Householder matrix Qk, which is
-         * the lower right portion (m-k) x (m-k) of Q
-         * Qk = I - 2 * v[k:] * v^T[k:] 
-         */
-        fltclr(Qk,m * m);
-        for (int i = 0; i < m; i++)
-            Qk[i][i] = 1.0;
-        for (int i = k; i < m; i++)
-            for (int j = k; j < m; j++)
-                Qk[i][j] -= 2.0 * v[i - k] * v[j - k];
 
-        /* Update R : R = Qk @ R */
-        matmul(Rr,Qk,R,m,m,n);
-        fltcpy(R,Rr,m*n);
-        
-        /* Update Q: Q = Q @ Qk.T */
-        matmulT(Qr,Q,Qk,m,m,m);
-        fltcpy(Q,Qr,m*m);
+        /* Apply Householder reflection to R (rows k:m, columns k:n) */
+        for (int j = k; j < n; j++) {
+            float dot = 0.0f;
+            for (int i = 0; i < m - k; i++)
+                dot += v[i] * R[k + i][j];
+            for (int i = 0; i < m - k; i++)
+                R[k + i][j] -= 2.0f * v[i] * dot;
+        }
+
+        /* Apply Householder reflection to Q (all rows, columns k:m) */
+        for (int j = 0; j < m; j++) {
+            float dot = 0.0f;
+            for (int i = 0; i < m - k; i++)
+                dot += v[i] * Q[j][k + i];
+            for (int i = 0; i < m - k; i++)
+                Q[j][k + i] -= 2.0f * v[i] * dot;
+        }
     }
+
     if (Q_ != NULL) {
         if (R_ != NULL) /* R[:min(m, n),:] copy the first d rows of R to R_ */
             fltcpy(R_,R,d * n);
@@ -114,9 +114,6 @@ void QR(fArr2D M_/*[m][n]*/,
 
     freemem(Q);
     freemem(R);
-    freemem(Qk);
-    freemem(Rr);
-    freemem(Qr);
     freemem(x);
     freemem(v);
 }
