@@ -687,7 +687,7 @@ int main(int argc, char** argv)
         init_lrng(42);
         const int layers[3] = {32,128,32};
         const float range[3] = {0.0,5.0,0.1};
-        test_dense_regression(range,layers,3,"linear",0.0028,0.028,5000);
+        test_dense_regression(range,layers,3,"linear",0.0008,0.008,30000);
     }
     if (tests[1]) {
         init_lrng(42);
@@ -704,12 +704,12 @@ int main(int argc, char** argv)
     if (tests[3]) {
         init_lrng(42);
         const int layers[2] = {12,12};
-        test_dense_classification(layers,2,"linear",5,0.001,0.01,75);
+        test_dense_classification(layers,2,"linear",5,0.001,0.01,120);
     }
     if (tests[4]) {
         init_lrng(42);
         const int layers[1] = {80};
-        test_lstm_dense_classification(layers,1,"adamw",6,0.002,0.02,5);
+        test_lstm_dense_classification(layers,1,"adamw",6,0.001,0.01,10);
     }
     printf("\nAll tests completed\n\n");
     return 0;

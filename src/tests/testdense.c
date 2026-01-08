@@ -138,7 +138,7 @@ int main()
     init_lrng(42);
     const int layers[3] = {64,128,16};
     const float range[3] = {0.0,5.0,0.1};
-    test_dense(range,layers,3,0.0002,60000);
+    test_dense(range,layers,3,0.0001,200000);
 
     return 0;
 }

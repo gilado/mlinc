@@ -111,7 +111,7 @@ static inline fArr2D dense_forward(DENSE* restrict l,
  * dy (previous layer's S).
  */
 static inline void dense_backward(DENSE* restrict l, 
-                                  const fArr2D restrict dy/*[B][S]*/, 
+                                  fArr2D restrict dy/*[B][S]*/, 
                                   const fArr2D restrict X/*[B][D]*/,
                                   fArr2D restrict gWx/*[D][S]*/,
                                   fArr2D restrict dx/*[B][D]*/,
@@ -120,20 +120,21 @@ static inline void dense_backward(DENSE* restrict l,
     (void) lyr;
     /* Gradient with respect to weights: gWx = X.T @ dy */
     Tmatmul(gWx,X,dy,l->D,l->B,l->S);
-    if (dx != NULL) {
-        /* Gradient with respect to inputs: 
-         * dx = (dy @ Wx.T) * (gradient of activation (input))
-         * The stored hidden state already is activated, and the gradient
-         * functions below are adjusted accordingly (see loss.h)
+
+    switch (l->activation) {
+        case 's':
+            d_sigmoid(dy, l->h, l->B, l->S);
+            break;
+        case 'r':
+            d_relu(dy, l->h, l->B, l->S);
+            break;
+        /* Softmax intentionally excluded:
+         * dy must already be (y_pred - y_true)
          */
+    }
+    if (dx != NULL) {
         /* dx = (dy @ Wx.T) */
         matmulT(dx,dy,l->Wx,l->B,l->S,l->D);
-        switch (l->activation) {
-            case 's' : d_sigmoid(dx,X,l->B,l->D); break;
-            case 'r' : d_relu(dx,X,l->B,l->D); break;
-            /* REVIEW: applying d_softmax() degrades convergence - why? */
-            /* case 'S' : d_softmax(dx,X,yt,l->B,l->D); break;          */
-        }
     }
 }
 #endif
