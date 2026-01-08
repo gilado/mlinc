@@ -201,7 +201,7 @@ int svd_test(fArr2D A, int m, int n, int quiet, int precision, int index)
         printf("Matrix %s%d is not orthogonal\n",(m>=n)?"Vt":"U",index);
 
     freemem(R);
-    return ok && dec && pos & ortho;
+    return ok && dec && pos && ortho;
 }
 
 int svd_test_U(fArr2D A, fArr2D U, int inplace, int m, int n, int quiet, int precision, int index)
