@@ -64,7 +64,7 @@ static inline void softmax(fArr2D a_/*[B][K]*/, int B, int K)
         typedef float (*VecK); 
         VecK  p = (VecK) a[j];
 
-        float m = 0.0; /* max(p[]) */
+        float m = p[0]; /* max(p[]) */
         for (int i = 0; i < K; i++) {
             if (m < p[i])
                 m = p[i];
@@ -130,7 +130,7 @@ static inline float d_relu_1(float z)
     return (z > 0.0) ? 1.0 : 0.0;
 }
 
-/* Calculates the derivative of the sigmoid function for a 2D array z, and 
+/* Calculates the derivative of the ReLU function for a 2D array z, and 
  * updates the input array x, by multiplying its original values by the 
  * derivative. 
  *
