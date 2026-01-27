@@ -5,11 +5,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
+#include "random.h"
 #include "lpc.h"
-
-#ifndef M_PI
-#define M_PI 3.14159265358979323846
-#endif
 
 static int lpc(
     const float *x, /* windowed input signal */
@@ -76,34 +73,19 @@ float computeLPC(const float* samples, int numSamples, int order, double *lpcc)
     return (float) error;
 }
 
-static double nrand(double mean, double stddev);
-inline static double nrand(double mean, double stddev) 
-{
-    double u1 = rand() / ((double)RAND_MAX + 1);
-    double u2 = rand() / ((double)RAND_MAX + 1);
-    // Box-Muller transform
-    double z = sqrt(-2.0 * log(u1)) * sin(2.0 * M_PI * u2);
-    return mean + stddev * z; // Shift and scale
-}
-
 static void lpc2samples(const double *lpcc, int order, float sigma,
                                       float *output_signal, int signal_length)
 {
-    for (int m = 0; m < signal_length; m++)
+    sigma = (sigma > 1e-13) ? sigma : 0;
+    sigma = sqrt(sigma / signal_length);
+    for (int m = 0; m < signal_length && m < order; m++)
         output_signal[m] = 0.0;
-    if (sigma == 0.0)
-        return;
-    double sig[signal_length];
-    for (int m = 0; m < signal_length; m++)
-        sig[m] = sigma * nrand(0,1);
     for (int m = order; m < signal_length; m++) {
-        double sample = sig[0];
+        double sample = sigma * nrand(0,1);
         for (int n = 1; n <= order; n++)
-            sample += sig[m - n] - lpcc[n] * output_signal[m - n];
+            sample -= lpcc[n] * output_signal[m - n];
         output_signal[m] = (float) sample;
     }
-    for (int i = 0; i < signal_length; i++)
-        output_signal[i] *= 0.03;
 }
 
 

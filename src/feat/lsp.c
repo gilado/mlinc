@@ -23,7 +23,7 @@
  * even-order Chebyshev polynomial derived from LPC analysis.
  *
  * Parameters:
- *     coef  - array of Chebyshev coefficients, highest degree first
+ *     coef  - array of Chebyshev coefficients
  *     n     - number of coefficients (LPC half order)
  *     x     - value at which to evaluate the polynomial (in [-1, 1])
  *

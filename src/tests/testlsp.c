@@ -98,17 +98,20 @@ int main(int argc, char **argv)
         double lpcCoeff[lpcOrder + 1];
         double error = computeLPC(window,winSize,lpcOrder,lpcCoeff);
 
+        printf("LPC,");
         for (int i = 0; i <= lpcOrder; i++)
-            printf("%8.5lf,",lpcCoeff[i]);
+            printf("%12.9lf,",lpcCoeff[i]);
         printf("\n");
         double lspCoeff[lpcOrder + 1];
         lpc2lsp(lpcCoeff,lspCoeff,lpcOrder);
         lsp2lpc(lspCoeff,lpcCoeff,lpcOrder);
+        printf("LSP,");
         for (int i = 0; i <= lpcOrder; i++)
-            printf("%8.5lf,",lspCoeff[i]);
+            printf("%12.9lf,",lspCoeff[i]);
         printf("\n");
+        printf("LPC,");
         for (int i = 0; i <= lpcOrder; i++)
-            printf("%8.5lf,",lpcCoeff[i]);
+            printf("%12.9lf,",lpcCoeff[i]);
         printf("\n");
         printf("\n"); fflush(stdout);
         LPCsynthesis(lpcCoeff,lpcOrder,sqrt(error),winSize,window2);
