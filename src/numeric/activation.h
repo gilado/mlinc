@@ -163,8 +163,7 @@ static inline void d_relu(fArr2D x_/*[B][D]*/,
  *   - Att    : The output of the softmax function (attention weights)
  *   - dAtt   : The gradient of the loss with respect to the softmax output
  *   - dScores: The resulting gradient of the loss with respect to the input scores
- *              before softmax. (the values the softmax function was applied to),
- *              shape [B][D]. This is what this function computes and updates in-place.
+ *              before softmax.
  * Reference:
  *   https://eli.thegreenplace.net/2016/the-softmax-function-and-its-derivative
  */
@@ -195,8 +194,8 @@ static inline void softmax_backward(fArr2D dScores/*[B][D]*/,
  * cross entropy loss for a 2D array z, and updates the input array x,
  * by multiplying its original values by the derivative.
  *
- * This function assumes that the loss function is cross-entropy and
- * the softmax activation, simplifying the gradient calculation.
+ * This function assumes that the loss function is cross-entropy, 
+ * simplifying the gradient calculation.
  *
  * Parameters:
  *   x  : Pointer to the 2D array to be updated
