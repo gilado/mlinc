@@ -45,7 +45,9 @@ PROGRAMS = sph2wav feat2audio word2vec har timitfeat timit timittest
 TESTS = testhann testfilter testlpc testlsp testw2v \
 		testmem testarray testrandom testhash testannoy \
 		testqr testsvd testpca \
-		testadamw testctc testdense testlstm testembed testmodel 
+		testadamw testctc \
+		testdense testlstm testmodel \
+		testembed testmha
 
 SRCS = $(shell find $(SRC_DIR) -name '*.c')
 HDRS = $(shell find $(SRC_DIR) -name '*.h')

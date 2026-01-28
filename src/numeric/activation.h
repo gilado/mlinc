@@ -153,16 +153,57 @@ static inline void d_relu(fArr2D x_/*[B][D]*/,
             x[i][j] *= d_relu_1(z[i][j]);
 }
 
-/* Calculates the derivative of the softmax function for a 2D array z, and 
- * updates the input array x, by multiplying its original values by the 
- * derivative. 
+/* Backward pass for softmax activation.
+ *
+ * Computes the gradient of the loss with respect to the input scores of the softmax,
+ * given the gradient with respect to the softmax output:
+ *
+ * dScores = J_softmax(Att) @ dAtt
+ * where:
+ *   - Att    : The output of the softmax function (attention weights)
+ *   - dAtt   : The gradient of the loss with respect to the softmax output
+ *   - dScores: The resulting gradient of the loss with respect to the input scores
+ *              before softmax. (the values the softmax function was applied to),
+ *              shape [B][D]. This is what this function computes and updates in-place.
+ * Reference:
+ *   https://eli.thegreenplace.net/2016/the-softmax-function-and-its-derivative
+ */
+static inline void softmax_backward(fArr2D dScores/*[B][D]*/,
+                                    const fArr2D dAtt/*[B][D]*/,
+                                    const fArr2D Att/*[B][D]*/,
+                                    int B, int D)
+{
+    typedef float (*ArrBD)[D];
+    ArrBD dS = (ArrBD) dScores;
+    const ArrBD dA = (const ArrBD) dAtt;
+    const ArrBD A = (const ArrBD) Att;
+
+    for (int i = 0; i < B; i++) {
+        float dot = 0.0f;
+
+        /* dot = sum_k dAtt[k] * Att[k] */
+        for (int k = 0; k < D; k++)
+            dot += dA[i][k] * A[i][k];
+
+        /* dScores[j] = Att[j] * (dAtt[j] - dot) */
+        for (int j = 0; j < D; j++)
+            dS[i][j] = A[i][j] * (dA[i][j] - dot);
+    }
+}
+
+/* Calculates the derivative of the softmax function combined with
+ * cross entropy loss for a 2D array z, and updates the input array x,
+ * by multiplying its original values by the derivative.
+ *
+ * This function assumes that the loss function is cross-entropy and
+ * the softmax activation, simplifying the gradient calculation.
  *
  * Parameters:
  *   x  : Pointer to the 2D array to be updated
  *   z  : Pointer to the 2D array, the output of the softmax function
- *   yt : Pointer to the 2D array of the the target values
- *   B  : Number of rows in the matrices
- *   D  : Number of columns in the matrices
+ *   yt : Pointer to the 2D array of the target one-hot encoded values
+ *   B  : Number of rows in the matrices (batch size)
+ *   D  : Number of columns in the matrices (number of classes)
  *
  * Reference:
  *   https://eli.thegreenplace.net/2016/the-softmax-function-and-its-derivative

@@ -8,7 +8,7 @@
 /* Define types of one and two dimensional arrays of unspecified dimensions
  * These are dynamically cast to explicit dimensions within each function
  *
- * for example  
+ * for example
  *     fArr2D a2d; // a2d is two-dimensional array of unspecified dimensions
  *     typedef float (*ArrNK)[K]; // two-dimensional array NxK (e.g. N=3 K=5)
  *     ArrNK a2dNK = (ArrNK) a2d; a2dNK is the addrress of 2-D array 3x5
@@ -21,22 +21,22 @@
  * and in comments, see examples below.
  *
  */
-typedef int (*iVec);     
+typedef int (*iVec);
 typedef int (*iArr2D)[];
 typedef float (*fVec);
 typedef float (*fArr2D)[];
 
 /* Multiplies matrix x by matrix y, and returns the result in matrix r.
- * r = x @ y 
+ * r = x @ y
  * r: resulting matrix NxM
  * x: left matrix Nxd
  * y: right matrix dxM
- * Note that d is the common dimension, not related to D, which usually 
+ * Note that d is the common dimension, not related to D, which usually
  * indicates the size of neural network layer's input vectors dimension.
  */
-static inline void matmul(fArr2D restrict r_/*[N][M]*/, 
-                          const fArr2D restrict x_/*[N][d]*/, 
-                          const fArr2D restrict y_/*[d][M]*/, 
+static inline void matmul(fArr2D restrict r_/*[N][M]*/,
+                          const fArr2D restrict x_/*[N][d]*/,
+                          const fArr2D restrict y_/*[d][M]*/,
                           int N, int d, int M)
 {
     typedef float (*ArrNM)[M]; ArrNM r = (ArrNM) r_;
@@ -50,41 +50,58 @@ static inline void matmul(fArr2D restrict r_/*[N][M]*/,
 }
 
 /* Multiplies matrix x by the transpose of matrix y.
- * Returns the result in matrix r.
- * r = x @ y.T 
+ * Adds the result to the matrix r.
+ * r = r + x @ y.T
  * r: resulting matrix NxM
  * x: left matrix Nxd
  * y: right matrix Mxd
- * Note that d is the common dimension, not related to D, which usually 
+ * Note that d is the common dimension, not related to D, which usually
  * indicates the size of neural network layer's input vectors dimension.
  */
-static inline void matmulT(fArr2D restrict r_/*[N][M]*/, 
-                            const fArr2D restrict x_/*[N][d]*/, 
-                            const fArr2D restrict y_/*[M][d]*/, 
-                            int N, int d, int M)
+static inline void addMatmulT(fArr2D restrict r_/*[N][M]*/,
+                               const fArr2D restrict x_/*[N][d]*/,
+                               const fArr2D restrict y_/*[M][d]*/,
+                               int N, int d, int M)
 {
     typedef float (*ArrNM)[M]; ArrNM r = (ArrNM) r_;
     typedef float (*ArrNd)[d]; const ArrNd x = (const ArrNd) x_;
     typedef float (*ArrMd)[d]; const ArrMd y = (const ArrMd) y_;
-    fltclr(r,N * M);
     for (int i = 0; i < N; i++)
         for (int j = 0; j < M; j++)
             for (int k = 0; k < d; k++)
                 r[i][j] += x[i][k] * y[j][k];
 }
 
+/* Multiplies matrix x by the transpose of matrix y.
+ * Returns the result in matrix r.
+ * r = x @ y.T
+ * r: resulting matrix NxM
+ * x: left matrix Nxd
+ * y: right matrix Mxd
+ * Note that d is the common dimension, not related to D, which usually
+ * indicates the size of neural network layer's input vectors dimension.
+ */
+static inline void matmulT(fArr2D restrict r_/*[N][M]*/,
+                            const fArr2D restrict x_/*[N][d]*/,
+                            const fArr2D restrict y_/*[M][d]*/,
+                            int N, int d, int M)
+{
+    fltclr((float *) r_,N * M);
+    return addMatmulT(r_,x_,y_,N,d,M);
+}
+
 /* Multiplies the transpose of matrix x by matrix y.
  * Returns the result in matrix r.
- * r = x.T @ y 
+ * r = x.T @ y
  * r: resulting matrix NxM
  * x: left matrix dxN
  * y: right matrix dxM
- * Note that d is the common dimension, not related to D, which usually 
+ * Note that d is the common dimension, not related to D, which usually
  * indicates the size of neural network layer's input vectors dimension.
  */
-static inline void Tmatmul(fArr2D restrict r_/*[N][M]*/, 
-                           const fArr2D restrict x_/*[d][N]*/, 
-                           const fArr2D restrict y_/*[d][M]*/, 
+static inline void Tmatmul(fArr2D restrict r_/*[N][M]*/,
+                           const fArr2D restrict x_/*[d][N]*/,
+                           const fArr2D restrict y_/*[d][M]*/,
                            int N, int d, int M)
 {
     typedef float (*ArrNM)[M]; ArrNM r = (ArrNM) r_;
@@ -97,15 +114,15 @@ static inline void Tmatmul(fArr2D restrict r_/*[N][M]*/,
                 r[i][j] += x[k][i] * y[k][j];
 }
 
-/* Multiplies the vector v by the matrix m and 
+/* Multiplies the vector v by the matrix m and
  * adds the resulting vector to the vector in r.
  * r = r + v @ m
  * r: vector 1xN
  * v: vector 1xM
  * m: matrix MxN
  */
-static inline void addvecmatmul(fVec restrict r_/*[N]*/, 
-                             const fVec restrict v_/*[M]*/, 
+static inline void addvecmatmul(fVec restrict r_/*[N]*/,
+                             const fVec restrict v_/*[M]*/,
                              const fArr2D restrict m_/*[M][N]*/,
                              int M, int N)
 {
@@ -115,20 +132,20 @@ static inline void addvecmatmul(fVec restrict r_/*[N]*/,
     VecN r = (VecN) r_;
     const VecM v = (const VecM) v_;
     const ArrMN m = (const ArrMN) m_;
-    
+
     for (int i = 0; i < M; i++)
         for (int j = 0; j < N; j++)
             r[j] += v[i] * m[i][j];
 }
 
-/* Multiplies the vector w by the transpose of matrix m 
+/* Multiplies the vector w by the transpose of matrix m
  * and adds the resulting vector to the vector in v.
  * v = v + w @ m.T
  * v: vector 1xN
  * w: vector 1xM
  * m: matrix NxM
  */
-static inline void addinnermul(fVec restrict v_/*[N]*/, 
+static inline void addinnermul(fVec restrict v_/*[N]*/,
                                const fVec restrict w_/*[M]*/,
                                const fArr2D restrict m_/*[N][M]*/,
                                int N, int M)
@@ -139,21 +156,21 @@ static inline void addinnermul(fVec restrict v_/*[N]*/,
     VecN v = (VecN) v_;
     const VecM w = (const VecM) w_;
     const ArrNM m = (const ArrNM)  m_;
-    
+
     for (int i = 0; i < M; i++)
         for (int j = 0; j < N; j++)
             v[j] += w[i] * m[j][i];
 }
 
-/* Calculates the tensor product (i.e. outer multiplication) of the 
+/* Calculates the tensor product (i.e. outer multiplication) of the
  * vector v by the vector w, and adds the resulting matrix to the matrix in m.
  * m = m + (v ⊚ w)
  * ⊚  denotes outer multiplication
  * m: matrix NxM
  * v: vector 1xN
  * w: vector 1xM
- */  
-static inline void addoutermul(fArr2D restrict m_/*[N][M]*/, 
+ */
+static inline void addoutermul(fArr2D restrict m_/*[N][M]*/,
                                const fVec restrict v_/*[N]*/,
                                const fVec restrict w_/*[M]*/,
                                int N, int M)
@@ -172,8 +189,8 @@ static inline void addoutermul(fArr2D restrict m_/*[N][M]*/,
 /* Transposes the matrix m and returns the tansposed matrix in mt.
  * The transpose of m is obtained by flipping the rows and columns of m.
  */
-static inline void transpose(const fArr2D restrict m_/*[N][M]*/, 
-                             fArr2D restrict mt_/*[M][N]*/, 
+static inline void transpose(const fArr2D restrict m_/*[N][M]*/,
+                             fArr2D restrict mt_/*[M][N]*/,
                              int N, int M)
 {
     typedef float (*ArrNM)[M];
@@ -189,30 +206,30 @@ static inline void transpose(const fArr2D restrict m_/*[N][M]*/,
 /* Returns in v the elements of the main diagonal of m.
  * If N >= M v will contain M elements. Otherwise, it will contain N elements.
  */
-static inline void matdiag(const fArr2D restrict m_/*[N][M]*/, 
+static inline void matdiag(const fArr2D restrict m_/*[N][M]*/,
                            fVec restrict v_/*[min(N,M)]*/,
                            int N, int M)
 {
     int D = (N < M) ? N : M;
-    typedef float (*ArrNM)[M];    
+    typedef float (*ArrNM)[M];
     typedef float (*VecD);
     ArrNM m = (ArrNM) m_;
     VecD v = (VecD) v_;
     for (int i = 0; i < D; i++)
         v[i] = m[i][i];
-    
+
 }
 
 /* Returns a square matrix m whose diagonal contains the elements of
  * the vector v.
  */
 static inline void diagmat(const fVec restrict v_/*[N]*/,
-                           fArr2D restrict m_/*[N][N]*/, 
+                           fArr2D restrict m_/*[N][N]*/,
                            int N)
 {
     typedef float (*VecN);
     VecN v = (VecN) v_;
-    typedef float (*ArrNN)[N];    
+    typedef float (*ArrNN)[N];
     ArrNN m = (ArrNN) m_;
     fltclr(m,N*N);
     for (int i = 0; i < N; i++)
