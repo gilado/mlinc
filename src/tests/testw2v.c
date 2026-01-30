@@ -41,7 +41,7 @@ int main(int argc, char** argv)
         argc--;
     }
     if (argc < 2) {
-        fprintf(stderr,"syntax: testembds [-i] <embeddings file>\n");
+        fprintf(stderr,"syntax: testw2v [-i] <embeddings file>\n");
         return -1;
     }  
     const char* filename = argv[1];
