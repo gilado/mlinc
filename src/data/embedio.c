@@ -20,23 +20,22 @@
  */
 EMBEDDING* read_embedding(FILE* fp)
 {
-    int D, S, B, M, E;
+    int D, B, M, E;
     int pad;
-    int cnt = fscanf(fp," EMBEDDING D %d S %d B %d M %d E %d pad %d\n",
-                                                          &D,&S,&B,&M,&E,&pad);
-    if (cnt < 6 || cnt == EOF) {
+    int cnt = fscanf(fp," EMBEDDING D %d B %d M %d E %d pad %d\n",
+                                                          &D,&B,&M,&E,&pad);
+    if (cnt < 5 || cnt == EOF) {
         fprintf(stderr,"In read_embedding: failed to read the header\n");
         return NULL;
     }
     EMBEDDING* e = allocmem(1,1,EMBEDDING);
-    e->S = S;
     e->D = D;
     e->B = B;
     e->M = M;
     e->E = E;
     e->padinx = pad;
-    e->h = allocmem(e->B,e->S,float);
-    e->Wx = allocmem(e->D,e->S,float);
+    e->h = allocmem(e->B,e->E,float);
+    e->Wx = allocmem(e->D,e->E,float);
     int ok = read_array(e->Wx,e->D,e->E,fp,0);
     if (ok)
         return e;
@@ -62,8 +61,8 @@ EMBEDDING* read_embedding(FILE* fp)
  */
 int write_embedding(const EMBEDDING* e, FILE* fp)
 {
-    int cnt = fprintf(fp,"EMBEDDING D %d S %d B %d M %d E %d pad %d\n",
-                                           e->D,e->S,e->B,e->M,e->E,e->padinx);
+    int cnt = fprintf(fp,"EMBEDDING D %d B %d M %d E %d pad %d\n",
+                                           e->D,e->B,e->M,e->E,e->padinx);
     if (cnt <= 0 || cnt == EOF) {
         fprintf(stderr,"In write_embedding: failed to write the header\n");
         return 0;

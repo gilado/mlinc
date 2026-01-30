@@ -26,7 +26,6 @@ EMBEDDING* embedding_create(int embedding_dim, int context_len, int padinx)
     EMBEDDING* l = allocmem(1,1,EMBEDDING);
     l->E = embedding_dim;
     l->M = context_len;
-    l->S = embedding_dim;
     l->padinx = padinx;
     return l;
 }
@@ -44,7 +43,7 @@ void embedding_init(EMBEDDING* l, int vocab_size, int batch_size)
 {
     l->D = vocab_size;
     l->B = batch_size;
-    l->h = allocmem(l->B,l->S,float);
+    l->h = allocmem(l->B,l->E,float);
     l->Wx = allocmem(l->D,l->E,float);
     typedef float (*ArrDE)[l->E];
     ArrDE Wx = (ArrDE) l->Wx;

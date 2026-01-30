@@ -64,3 +64,16 @@ extern
 void plot_pca(float x[][2], int* y, int len, 
               int n_classes, const char** class_names, 
               float point_size, const char* title);
+
+/* plot_embeddings: Plots a graph of the given embeddings.
+ * 
+ * Parameters:
+ *   x             - 2D array of embeddings, shape [len][2].
+ *   n_embeddings  - Number of embeddings.
+ *   names         - Array of embedding names (length len)
+ *   point_size    - Size of the points in the plot.
+ *   title         - Title of the plot.
+ */
+extern 
+void plot_embeddings(float x[][2], int n_embeddings,
+                     const char** names, const char* title);

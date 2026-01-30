@@ -275,3 +275,46 @@ void plot_pca(float x[][2], int* y, int len,
     }
     signal(SIGINT, ctrlc); /* matplotcpp hijacks this */
 }
+
+#ifdef USE_DOUBLE
+extern "C" 
+void plot_embeddings(double x[][2], int n_embeddings, 
+                     const char** names, const char* title)
+#else
+extern "C" 
+void plot_embeddings(float x[][2], int n_embeddings, 
+                     const char** names, const char* title)
+#endif
+{
+    signal(SIGINT, ctrlc); /* matplotcpp hijacks this */
+    printf("Plotting results - close plot window to continue\n");
+
+    plt::figure_size(800, 800);
+
+    for (int i = 0; i < n_embeddings; i++) {
+        std::vector<double> xs = {0, x[i][0]};
+        std::vector<double> ys = {0, x[i][1]};
+        plt::plot(xs, ys);
+
+        // Put label text slightly offset from the point
+        double label_x = x[i][0];
+        double label_y = x[i][1];
+
+        // Add some offset so the label does not overlap the vector tip
+        double offset_x = 0.02; // adjust to your liking
+        double offset_y = 0.02;
+
+        plt::text(label_x + offset_x, label_y + offset_y, names[i]);
+    }
+    plt::xlabel("Principal Component 1");
+    plt::ylabel("Principal Component 2");
+    plt::title(title);
+    plt::grid(true);
+
+    try {
+        plt::show();
+    }
+    catch(...) {
+    }
+    signal(SIGINT, ctrlc); /* matplotcpp hijacks this */
+}

@@ -6,12 +6,11 @@
 
 typedef struct embedding_s {
   int D;       /* Vocabulary size            */
-  int S;       /* Output size (== E)         */
   int B;       /* Batch size                 */
   int M;       /* Context length             */
   int E;       /* Embedding dimension        */
   int padinx;  /* Pad index, -1 if not used  */
-  fArr2D h;    /* Hidden State matrix [B][S] */
+  fArr2D h;    /* Hidden State matrix [B][E] */
   fArr2D Wx;   /* Weights matrix [D][E]      */
 } EMBEDDING;
 
@@ -66,8 +65,7 @@ void embedding_reset(EMBEDDING* l);
  *   lyr - The ordinal number of this layer in a model (not used)
  *
  * Returns:
- *   Pointer to the predicted values, a 3D array h[B][M][E], which can be
- *   viewed as a flattened 2D array h[B][S], where S = M * E
+ *   Pointer to the predicted values, h[B][E]
  *
  * Note that in a multi-layered neural network, after the first layer
  * X is the output of a previous layer.
@@ -77,18 +75,18 @@ static inline fArr2D embedding_forward(EMBEDDING* restrict l,
 {
     (void) lyr;
     typedef float (*ArrBM)[l->M];
-    typedef float (*ArrBS)[l->S];
+    typedef float (*ArrBE)[l->E];
     typedef float (*ArrDE)[l->E];
     ArrBM X = (ArrBM) X_;
-    ArrBS h = (ArrBS) l->h;
+    ArrBE h = (ArrBE) l->h;
     ArrDE Wx = (ArrDE) l->Wx;
     /* X[B][M] => x[B][M][D] where x[B][M] is one-hot encoded */
     /* h = x @ Wx  => sum context vectors */
-    fltclr(h,l->B * l->S);
+    fltclr(h,l->B * l->E);
     for (int i = 0; i < l->B; i++)
         for (int j = 0; j < l->M; j++)
             for (int k = 0; k <l->E; k++)
-                h[i][j] += Wx[(int)X[i][j]][k];
+                h[i][k] += Wx[(int)X[i][j]][k];
     return l->h;
 }
 
@@ -108,26 +106,26 @@ static inline fArr2D embedding_forward(EMBEDDING* restrict l,
  * Note that in a multi-layered neural network, except the last layer,
  * dy is the gradient of the previous layer's input (dx), thus, the dimension
  * of dx (this layer's D) must equal the dimension of the previous layer's
- * dy (previous layer's S).
+ * dy (previous layer's E).
  */
 static inline void embedding_backward(EMBEDDING* restrict l, 
-                                  const fArr2D restrict dy_/*[B][S]*/, 
+                                  const fArr2D restrict dy_/*[B][E]*/,
                                   const fArr2D restrict X_/*[B][M]*/,
                                   fArr2D restrict gWx_/*[D][E]*/,
                                   fArr2D restrict dx_/*[B][M]*/, int lyr)
 {
     (void) lyr;
     typedef float (*ArrBM)[l->M];
-    typedef float (*ArrBS)[l->S];
+    typedef float (*ArrBE)[l->E];
     typedef float (*ArrDE)[l->E];
-    ArrBS dy = (ArrBS) dy_;
+    ArrBE dy = (ArrBE) dy_;
     ArrBM X = (ArrBM) X_;
     ArrDE gWx = (ArrDE) gWx_;
     ArrBM dx = (ArrBM) dx_;
 
     /* X[B][M] => x[B][M][D] where x[B][M] is one-hot encoded */
     /* Gradient with respect to weights: gWx = x.T @ dy */
-    fltclr(gWx,l->D * l->E);    
+    fltclr(gWx,l->D * l->E);
     for (int i = 0; i < l->B; i++) {
         for (int j = 0; j < l->M; j++) {
             int xij = (int) X[i][j];
@@ -139,12 +137,10 @@ static inline void embedding_backward(EMBEDDING* restrict l,
     }
     if (dx != NULL) { /* dx = (dy @ Wx.T) */
         fltclr(dx,l->B * l->M);
-        for (int i = 0; i < l->B; i++) {
-            for (int j = 0; j < l->M; j++) {
+        for (int i = 0; i < l->B; i++)
+            for (int j = 0; j < l->M; j++)
                 for (int k = 0; k < l->E; k++)
                     dx[i][j] += dy[i][k] / l->M;
-            }
-        }
     }
 }
 #endif
