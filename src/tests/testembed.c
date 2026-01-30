@@ -249,7 +249,7 @@ int test_word_embeddings(int cxt_size, int embedding_dim,
     /* Allocate memory for gradients */
     fArr2D dy[2];  /* Gradients with respect to the inputs  */
     fArr2D gWx[2]; /* Gradients with respect to the weights */
-    dy[0] = allocmem(embedding->B,embedding->S,float);
+    dy[0] = allocmem(embedding->B,embedding->E,float);
     dy[1] = allocmem(dense->B,dense->S,float);
     gWx[0] = allocmem(embedding->D,embedding->E,float);
     gWx[1] = allocmem(dense->D,dense->S,float);
@@ -326,47 +326,30 @@ int test_word_embeddings(int cxt_size, int embedding_dim,
         float cossim = tstwrdsim[i].cossim;
         printf("%10s %7.4f\n",wrdstr,cossim);
     }
-#if 0
-    WRDSIM allwrdsim[vocab_size];
-    for (int i = 0; i < vocab_size; i++) {
-        allwrdsim[i].wrdinx = i;
-        allwrdsim[i].cossim = cosine_similarity(
-                   female_king_vec,word_embedding(embedding,i),embedding_dim);
-    }
-    qsort(allwrdsim,vocab_size,sizeof(WRDSIM),qsort_compare);
-    printf("\nSimilarity of vocabulary words to king - man + woman\n");
-    for (int i = 0; i < vocab_size; i++) {
-        const char* wrdstr = hashmap_inx2str(hmap,allwrdsim[i].wrdinx);
-        printf("%10s %7.4f\n",wrdstr,allwrdsim[i].cossim);
-    }
-#endif
-  
-#ifdef NOT_YET_HAS_PLOT
+
+#ifdef HAS_PLOT
     {
         #include "../plot/plot.h"
-        float x[test_words_cnt + 1][embedding_dim]; 
-        float r[test_words_cnt + 1][2];
-        int y[test_words_cnt + 1];
-        const char* class_names[test_words_cnt + 1];
+        int nsamples = test_words_cnt + 1;
+        float x[nsamples][embedding_dim];
+        int rdim = 2;
+        float r[nsamples][rdim];
+        const char* vector_names[nsamples];
         
         /* test words embeddings + one entry for  king - man + woman */
-        for (int i = 0; i < test_words_cnt; i++) {
+        for (int i = 0; i < nsamples - 1; i++) {
             fltcpy(x[i],test_vec[i],embedding_dim);                
-            class_names[i] = test_word[i];
-            y[i] = i;
+            vector_names[i] = test_word[i];
         }
         /* add king - man + woman vector; it's index == test_words_size */
-        fltcpy(x[test_words_cnt],female_king_vec,embedding_dim);
-        class_names[test_words_cnt] = "king - man + woman";
-        y[test_words_cnt] = test_words_cnt;
+        fltcpy(x[nsamples - 1],female_king_vec,embedding_dim);
+        vector_names[nsamples - 1] = "king - man + woman";
 
-        PCA(x,r,test_words_cnt + 1,embedding_dim,2);
-        plot_pca(r,y,test_words_cnt + 1,test_words_cnt + 1,class_names,30.0,
-                   num_epochs,losses,NULL,"PCA of word embeddings");
+        PCA(x,r,nsamples,embedding_dim,rdim);
+        plot_embeddings(r,nsamples,vector_names,"PCA of word embeddings");
     }
-#else
-    (void) losses;
 #endif
+    (void) losses;
     freemem(dy[0]);
     freemem(dy[1]);
     freemem(gWx[0]);
