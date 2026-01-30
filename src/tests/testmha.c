@@ -8,28 +8,6 @@
 #include "mha.h"
 
 #define EPS 1e-3f
-#define TOL 1e-4f
-
-static inline float frand(void) { return urand(-1.0f, 1.0f); }
-static inline int irand(int lo, int hi) { return lo + (int)(lrng() * (hi - lo)); }
-
-float l2diff(const float* a, const float* b, int n)
-{
-    float s = 0.0f;
-    for (int i = 0; i < n; i++) {
-        float d = a[i] - b[i];
-        s += d * d;
-    }
-    return sqrtf(s);
-}
-
-void assert_close(const char* msg, float a, float b)
-{
-    if (fabsf(a - b) > TOL) {
-        printf("FAIL: %s  (%g vs %g)\n", msg, a, b);
-        exit(1);
-    }
-}
 
 void test_mha_zero_forward(MHA* m)
 {
@@ -38,38 +16,45 @@ void test_mha_zero_forward(MHA* m)
     int BT = m->BT;
     int D  = m->D;
 
-    float* X = calloc(BT * D, sizeof(float));
-    float* Y = calloc(BT * D, sizeof(float));
+    float X[BT][D];
+    float Y[BT][D];
 
+    fltclr(X, BT*D);
+    fltclr(Y, BT*D);
     fltclr(m->Wq, D*D);
     fltclr(m->Wk, D*D);
     fltclr(m->Wv, D*D);
     fltclr(m->Wo, D*D);
 
-    mha_forward(m, (fArr2D)X, (fArr2D)Y, 0);
+    mha_forward(m, X, NULL, Y, 0, 0);
 
-    for (int i = 0; i < BT * D; i++)
-        assert_close("Y should be zero", Y[i], 0.0f);
-
-    free(X);
-    free(Y);
+    for (int i = 0; i < BT; i++) {
+        for (int j = 0; j < D; j++) {
+            if (fabsf(Y[i][j]) > 1e-9f) {
+                printf("Y[%d][%d] should be zero but is %g\n",i,j,Y[i][j]);
+                exit(1);
+            }
+        }
+    }
 
     printf("  OK\n");
 }
 
-float mha_loss(MHA* m, float* X)
+float mha_loss(MHA* m, fArr2D X)
 {
     int BT = m->BT;
     int D  = m->D;
 
-    float* Y = calloc(BT * D, sizeof(float));
-    mha_forward(m, (fArr2D)X, (fArr2D)Y, 0);
+    float Y[BT][D];
+    fltclr(Y, BT * D);
+    
+    mha_forward(m, X, NULL, Y, 0, 0);
 
-    float L = 0.0f;
-    for (int i = 0; i < BT * D; i++)
-        L += Y[i];
+    float L = 0;
+    for (int i = 0; i < BT; i++)
+        for (int j = 0; j < D; j++)
+            L += Y[i][j];
 
-    free(Y);
     return L;
 }
 
@@ -80,85 +65,94 @@ void test_mha_finite_diff(MHA* m)
     int BT = m->BT;
     int D  = m->D;
 
-    float* X  = malloc(sizeof(float) * BT * D);
-    float* dX = calloc(BT * D, sizeof(float));
-    float* dY = malloc(sizeof(float) * BT * D);
+    float X[BT][D];
+    float dX[BT][D];
+    float dY[BT][D];
 
-    for (int i = 0; i < BT * D; i++) {
-        X[i]  = frand() * 0.1f;
-        dY[i] = 1.0f;   /* dL/dY = 1 */
-    }
+    typedef float (*ArrDD)[D];
 
-    for (int i = 0; i < D * D; i++) {
-        ((float*)m->Wq)[i] = frand() * 0.1f;
-        ((float*)m->Wk)[i] = frand() * 0.1f;
-        ((float*)m->Wv)[i] = frand() * 0.1f;
-        ((float*)m->Wo)[i] = frand() * 0.1f;
-    }
-
-    /* analytic gradients */
-    mha_forward(m, (fArr2D)X, NULL, 0);
-    mha_backward(m, (fArr2D)dY, (fArr2D)X, (fArr2D)dX, 0);
-
-    /* check a few X entries */
-    for (int idx = 0; idx < 5; idx++) {
-        int i = irand(0,BT * D);
-
-        float old = X[i];
-        X[i] = old + EPS;
-        float Lp = mha_loss(m, X);
-        X[i] = old - EPS;
-        float Ln = mha_loss(m, X);
-        X[i] = old;
-
-        float num = (Lp - Ln) / (2 * EPS);
-        float ana = dX[i];
-
-        if (fabsf(num - ana) > EPS) {
-            printf("FAIL dX[%d]: num=%g ana=%g\n", i, num, ana);
-            exit(1);
+    for (int i = 0; i < BT; i++) {
+        for (int j = 0; j < D; j++) {
+            X[i][j]  = urand(-0.1, 0.1);
+            dX[i][j] = 0;
+            dY[i][j] = 1;   /* dL/dY = 1 */
         }
     }
 
-    /* check a few Wq entries */
-    float* Wq = (float*)m->Wq;
-    float* gWq = (float*)m->gWq;
+    ArrDD Wq = (ArrDD) m->Wq;
+    ArrDD Wk = (ArrDD) m->Wk;    
+    ArrDD Wv = (ArrDD) m->Wv;
+    ArrDD Wo = (ArrDD) m->Wo;    
+    ArrDD gWq = (ArrDD) m->gWq;
 
-    for (int k = 0; k < 5; k++) {
-        int i = irand(0,D * D);
-
-        float old = Wq[i];
-        Wq[i] = old + EPS;
-        float Lp = mha_loss(m, X);
-        Wq[i] = old - EPS;
-        float Ln = mha_loss(m, X);
-        Wq[i] = old;
-
-        float num = (Lp - Ln) / (2 * EPS);
-        float ana = gWq[i];
-
-        if (fabsf(num - ana) > EPS) {
-            printf("FAIL gWq[%d]: num=%g ana=%g\n", i, num, ana);
-            exit(1);
+    for (int i = 0; i < D; i++) {
+        for (int j = 0; j < D; j++) {
+            Wq[i][j] = urand(-0.1, 0.1);
+            Wk[i][j] = urand(-0.1, 0.1);
+            Wv[i][j] = urand(-0.1, 0.1);
+            Wo[i][j] = urand(-0.1, 0.1);
         }
     }
 
-    free(X);
-    free(dX);
-    free(dY);
+    mha_forward(m, X, NULL, NULL, 0, 0);
+    mha_backward(m, dY, X, dX, 0);
+
+    for (int i = 0; i < BT; i++) {
+        for (int j = 0; j < D; j++) {
+
+            float old = X[i][j];
+            X[i][j] = old + EPS;
+            float Lp = mha_loss(m, X);
+            X[i][j] = old - EPS;
+            float Ln = mha_loss(m, X);
+            X[i][j] = old;
+
+            float num = (Lp - Ln) / (2 * EPS);
+            float ana = dX[i][j];
+
+            if (fabsf(num - ana) > EPS) {
+                printf("FAIL dX[%d][%d]: num=%g ana=%g\n", i, j, num, ana);
+                exit(1);
+            }
+        }
+    }
+
+    for (int i = 0; i < D; i++) {
+        for (int j = 0; j < D; j++) {
+
+            float old = Wq[i][j];
+            Wq[i][j] = old + EPS;
+            float Lp = mha_loss(m, X);
+            Wq[i][j] = old - EPS;
+            float Ln = mha_loss(m, X);
+            Wq[i][j] = old;
+
+            float num = (Lp - Ln) / (2 * EPS);
+            float ana = gWq[i][j];
+
+            if (fabsf(num - ana) > EPS) {
+                printf("FAIL gWq[%d][%d]: num=%g ana=%g\n", i, j, num, ana);
+                exit(1);
+            }
+        }
+    }
 
     printf("  OK\n");
 }
 
-float softmax_loss(float* Scores, float* dAtt, int T)
+float softmax_loss(fArr2D Scores, fArr2D dAtt_, int T)
 {
-    float Att[T*T];
-    memcpy(Att, Scores, sizeof(Att));
-    softmax((fArr2D)Att, T, T);
+    float Att[T][T];
+    fltcpy(Att, Scores, T * T);
+    softmax(Att, T, T);
 
-    float L = 0.0f;
-    for (int i = 0; i < T*T; i++)
-        L += Att[i] * dAtt[i];
+    typedef float (*ArrTT)[T];
+    const ArrTT dAtt = (ArrTT) dAtt_;
+
+    float L = 0;
+    for (int i = 0; i < T; i++)
+        for (int j = 0; j < T; j++)
+        L += Att[i][j] * dAtt[i][j];
 
     return L;
 }
@@ -168,39 +162,131 @@ void test_softmax_backward(void)
     printf("Test: softmax_backward isolated\n");
 
     const int T = 4;
-    float Scores[T*T];
-    float dAtt[T*T];
-    float dScores[T*T];
-    float Att[T*T];
+    float Scores[T][T];
+    float dAtt[T][T];
+    float dScores[T][T];
+    float Att[T][T];
 
-    for (int i = 0; i < T*T; i++) {
-        Scores[i] = frand();
-        dAtt[i]   = frand();
+    for (int i = 0; i < T; i++) {
+        for (int j = 0; j < T; j++) {
+            Scores[i][j] = urand(-1, 1);
+            dAtt[i][j]   = urand(-1, 1);
+        }
     }
 
     memcpy(Att, Scores, sizeof(Scores));
     softmax((fArr2D)Att, T, T);
 
     memcpy(dScores, dAtt, sizeof(dAtt));
-    softmax_backward((fArr2D)dScores, (fArr2D)dAtt, (fArr2D)Att, T, T);
+    softmax_backward(dScores, dAtt, Att, T, T);
 
-    for (int k = 0; k < 5; k++) {
-        int i = irand(0,T * T);
+    for (int i = 0; i < T; i++) {
+        for (int j = 0; j < T; j++) {
 
-        float old = Scores[i];
-        Scores[i] = old + EPS;
-        float Lp = softmax_loss(Scores, dAtt, T);
-        Scores[i] = old - EPS;
-        float Ln = softmax_loss(Scores, dAtt, T);
-        Scores[i] = old;
+            float old = Scores[i][j];
+            Scores[i][j] = old + EPS;
+            float Lp = softmax_loss(Scores, dAtt, T);
+            Scores[i][j] = old - EPS;
+            float Ln = softmax_loss(Scores, dAtt, T);
+            Scores[i][j] = old;
 
-        float num = (Lp - Ln) / (2 * EPS);
-        float ana = dScores[i];
+            float num = (Lp - Ln) / (2 * EPS);
+            float ana = dScores[i][j];
 
-        if (fabsf(num - ana) > EPS) {
-            printf("FAIL softmax dScores[%d]: num=%g ana=%g\n",
-                   i, num, ana);
-            exit(1);
+            if (fabsf(num - ana) > EPS) {
+                printf("FAIL softmax dScores[%d][%d]: num=%g ana=%g\n",
+                       i, j, num, ana);
+                exit(1);
+            }
+        }
+    }
+
+    printf("  OK\n");
+}
+
+void test_mask(MHA* m) {
+    printf("Test: MHA mask\n");
+
+    int B = m->B;
+    int T = m->T;
+    int D = m->D;
+    int BT = m->BT;
+
+    float X[BT][D];
+    float Y[BT][D];
+
+    typedef float (*ArrDD)[D];
+    typedef float (*ArrTT)[T];
+
+    for (int i = 0; i < BT; i++)
+        for (int j = 0; j < D; j++)
+            X[i][j] = urand(-0.1, 0.1);
+
+    fltclr(m->Wq, D * D);
+    fltclr(m->Wk, D * D);
+    fltclr(m->Wv, D * D);
+    fltclr(m->Wo, D * D);
+
+    ArrDD Wq = (ArrDD) m->Wq;
+    ArrDD Wk = (ArrDD) m->Wk;    
+    for (int i = 0; i < D / 2; i++) {
+        Wq[i][i] = 1;
+        Wk[i][i] = 1;
+    }
+
+    mha_forward(m, X, NULL, Y, 1, 0);
+
+    ArrTT Scores = (ArrTT) m->Scores;
+
+    for (int b = 0; b < B; b++) {
+        for (int i = 0; i < T; i++) {
+            for (int j = i + 1; j < T; j++) {
+                if (fabsf(Scores[i][j]) > 1e-9) {
+                    printf("FAIL mask: Scores[%d][%d] = %g not masked\n", i, j, Scores[i][j]);
+                    exit(1);
+                }
+            }
+        }
+    }
+
+    printf("  OK\n");
+}
+
+void test_padding_mask(MHA* m) {
+    printf("Test: MHA padding mask\n");
+
+    int B = m->B;
+    int T = m->T;
+    int D = m->D;
+    int BT = m->BT;
+
+    float X[BT][D];
+    float Y[BT][D];
+
+    for (int i = 0; i < BT; i++)
+        for (int j = 0; j < D; j++)
+            X[i][j] =  urand(-0.1, 0.1);
+
+    // Create pad_mask array - length B*T
+    // The last two tokens of the last batch are masked
+    int pad_mask[BT];
+    for (int i = 0; i < BT; i++)
+        pad_mask[i] = 1;
+    pad_mask[(B - 1) * T + (T - 2)] = 0;
+    pad_mask[(B - 1) * T + (T - 1)] = 0;
+
+    mha_forward(m, X, pad_mask, Y, 0, 0);
+
+    typedef float (*ArrTT)[T];
+    ArrTT Scores = (ArrTT)m->Scores;
+
+    // Check Scores corresponding to padded tokens are close to zero
+    for (int t = T - 2; t < T; t++) {
+        for (int j = 0; j < T; j++) {
+            if (Scores[j][t] > 1e-8) {
+                printf("FAIL pad mask col: Scores[%d][%d] = %g not masked\n", j, t, Scores[j][t]);
+                exit(1);
+            }
         }
     }
 
@@ -211,12 +297,15 @@ int main(void)
 {
     init_lrng(42);
 
-    MHA* m= mha_create(2,2);
-    mha_init(m,4,2);
+    MHA* m = mha_create(2, 4);  // batch=2, seq_len=4
+    mha_init(m, 8, 2, 1);       // D=8, H=2
 
     test_softmax_backward();
     test_mha_zero_forward(m);
     test_mha_finite_diff(m);
+
+    test_mask(m);
+    test_padding_mask(m);
 
     mha_free(m);
 
