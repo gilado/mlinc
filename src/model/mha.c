@@ -14,7 +14,7 @@ MHA* mha_create(int heads, int steps)
     return l;
 }
 
-void mha_init(MHA* l, int input_dim, int batch_size)
+void mha_init(MHA* l, int input_dim, int batch_size, int training)
 {
     if (input_dim % l->H != 0) {
         fflush(stdout);
@@ -46,7 +46,9 @@ void mha_init(MHA* l, int input_dim, int batch_size)
     
     l->Out = allocmem(l->BT,l->D,float);
 
-    /* backward buffers */
+    if (!training)
+        return;
+
     l->dOut = allocmem(l->BT,l->D,float);
 
     l->dQ = allocmem(l->BT,l->D,float);

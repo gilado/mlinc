@@ -1,5 +1,6 @@
 /* Copyright (c) 2026 Gilad Odinak */
 /* Multi-Head Attention layer data structures and functions */
+/* Reference: Attention Is All You Need https://arxiv.org/pdf/1706.03762v7 */
 #ifndef MHA_H
 #define MHA_H
 #include "float.h"
@@ -15,13 +16,11 @@ typedef struct {
     int Dh;     /* D / H */
     int BT;     /* B * T */
 
-    /* parameters (paper Eq. (3), page 4) */
     fArr2D Wq;  /* [D][D] */
     fArr2D Wk;  /* [D][D] */
     fArr2D Wv;  /* [D][D] */
     fArr2D Wo;  /* [D][D] */
 
-    /* forward intermediates */
     fArr2D Q;   /* [BT][D] */
     fArr2D K;   /* [BT][D] */
     fArr2D V;   /* [BT][D] */
@@ -61,13 +60,15 @@ typedef struct {
 
 MHA* mha_create(int heads, int steps);
 
-void mha_init(MHA* l, int input_dim, int batch_size);
+void mha_init(MHA* l, int input_dim, int batch_size, int training);
 
 void mha_free(MHA* l);
 
 static inline void mha_forward(MHA* restrict l,
                                const fArr2D restrict X/*[BT][D]*/,
+                               const iVec restrict pad_mask/*[BT]*/,
                                fArr2D Y/*[BT][D]*/,
+                               int mask,
                                int lyr)
 {
     (void) lyr;
@@ -102,7 +103,7 @@ static inline void mha_forward(MHA* restrict l,
 
     const ArrBTD Out = (ArrBTD) l->Out;
 
-    /* Eq. (3), page 4: Q = XWq, K = XWk, V = XWv */
+    /* Linear projection of all heads - page 4. sec. 3.2.2 */
     matmul(Q, X, Wq, BT, D, D);
     matmul(K, X, Wk, BT, D, D);
     matmul(V, X, Wv, BT, D, D);
@@ -112,7 +113,7 @@ static inline void mha_forward(MHA* restrict l,
     for (int b = 0; b < B; b++) {
         for (int h = 0; h < H; h++) {
 
-            /* split heads - Fig. 2, page 3 */
+            /* Split heads - page 5. sec. 3.2.2: definition of head */
             for (int t = 0; t < T; t++) {
                 int r = b * T + t;
                 fltcpy(&Qh[t][0], &Q[r][h*Dh], Dh);
@@ -120,16 +121,31 @@ static inline void mha_forward(MHA* restrict l,
                 fltcpy(&Vh[t][0], &V[r][h*Dh], Dh);
             }
 
-            /* Eq. (1), page 4: QKᵀ */
+            /* Eq. (1), page 4: Q @ K.T */
             matmulT(Scores, Qh, Kh, T, Dh, T);
 
-            /* scale by √dk - Eq. (1) */
+            /* Scale by sqrt(dk) - Eq. (1) */
             float s = 1.0f / sqrtf((float)Dh);
             for(int i=0;i<T;i++)
               for(int j=0;j<T;j++)
                 Scores[i][j] *= s;
 
-            /* softmax - Eq. (1) */
+            if (mask) {
+                /* Optional mask - Fig. 2, page 4 */
+                /* Also section 3.2.3, page 5     */
+                for (int i = 0; i < T; i++)
+                    for (int j = i + 1; j < T; j++)
+                        Scores[i][j] = -1e9f;
+            }
+
+            if (pad_mask != NULL) {
+                for (int i = 0; i < T; i++)
+                    if (!pad_mask[b * T + i])
+                        for (int j = 0; j < T; j++)
+                            Scores[j][i] = -1e9f;
+            }
+
+            /* Softmax - Eq. (1) */
             softmax(Scores, T, T);
 
             fltcpy(Att, Scores, T * T);
@@ -137,7 +153,7 @@ static inline void mha_forward(MHA* restrict l,
             /* Eq. (1): Attention @ V */
             matmul(Oh, Att, Vh, T, T, Dh);
 
-            /* concatenate heads - Eq. (2) */
+            /* Concatenate heads - page 5. sec. 3.2.2: definition of MultiHead() */
             for (int t = 0;t < T; t++) {
                 int r= b * T + t;
                 fltcpy(&Out[r][h * Dh], &Oh[t][0], Dh);
