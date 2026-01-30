@@ -1,7 +1,7 @@
 #!/bin/bash
 echo "The news dataset contains duplicates."
 echo "This script renames files that contain duplicate data"
-echo "However, word2vec program does not depend onduplicate removals."
+echo "However, word2vec program does not depend on duplicate removals."
 echo "You may still want to run this script for other purposes."
 echo "This script execution time may be a few hours"
 read -p "Press any key to continue, ^C to abort "
