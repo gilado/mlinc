@@ -56,9 +56,8 @@ float* word_embedding(EMBEDDING* embd, int wrdinx)
  */
 int qsort_compare_word_freq(const void *a, const void *b) 
 {   /* WRDFRQ declared in newsfile.h */
-    float diff = ((WRDFRQ *)b)->cnt - ((WRDFRQ *)a)->cnt;
-    if (diff > 0) return 1;
-    if (diff < 0) return -1;
+    if (((WRDFRQ *)b)->cnt > ((WRDFRQ *)a)->cnt) return 1;
+    if (((WRDFRQ *)b)->cnt < ((WRDFRQ *)a)->cnt) return -1;
     return 0;
 }
 
@@ -92,7 +91,7 @@ int main(int argc, char** argv)
     int batch_size = 100;
     int cxt_size = 4;
     int num_epochs = 1;
-    float learning_rate = 0.01;
+    float learning_rate = 0.001;
     int print_vocab = 0;
     int max_vocab = 3000000;   /* Set to 3 x expected number of unique words */
     int hash_mem = 10000000;   /* hashmap will increase this value as needed */
@@ -132,7 +131,7 @@ int main(int argc, char** argv)
 
     printf("\n");   
     printf("Trains an embedding layer to create word embeddings using\n");
-    printf("Continous Bag of Words (CBOW) method\n");
+    printf("Continuous Bag of Words (CBOW) method\n");
     printf("context size = %d, embedding dim = %d, batch size = %d\n"
            "%d epochs, learning_rate = %g\n\n",
            cxt_size,embedding_dim,batch_size,num_epochs,learning_rate);
@@ -256,7 +255,7 @@ int main(int argc, char** argv)
     /* Allocate memory for gradients */
     fArr2D dy[2];  /* Gradients with respect to the inputs  */
     fArr2D gWx[2]; /* Gradients with respect to the weights */
-    dy[0] = allocmem(embedding->B,embedding->S,float);
+    dy[0] = allocmem(embedding->B,embedding->E,float);
     dy[1] = allocmem(dense->B,dense->S,float);
     gWx[0] = allocmem(embedding->D,embedding->E,float);
     gWx[1] = allocmem(dense->D,dense->S,float);
@@ -317,12 +316,12 @@ int main(int argc, char** argv)
                 int j; /* index of a word in file's words */
                 int k; /* index of a word in a context    */
                 for (k = m, j = i + ii + 1; k < cxt_size && j < cnt; j++)
-                    if (file_words[j] < stop_cnt)
+                    if (file_words[j] >= stop_cnt)
                         contexts[ii][k++] = file_words[j];
                 while (k < cxt_size) /* pad as needed */
                     contexts[ii][k++] = 0;
                 for (k = m - 1, j = i + ii - 1; k >= 0 && j >= 0; j--)
-                    if (file_words[j] < stop_cnt)
+                    if (file_words[j] >= stop_cnt)
                         contexts[ii][k--] = file_words[j];
                 while (k >= 0) /* pad as needed */
                     contexts[ii][k--] = 0;
@@ -351,7 +350,7 @@ int main(int argc, char** argv)
             update(embedding->Wx,gWx[0],embedding->D,embedding->E,learning_rate);
             update(dense->Wx,gWx[1],dense->D,dense->S,learning_rate);
             word_cnt += ii;
-            int pct = file_cnt / (tot_file_cnt / 100);
+            int pct = (tot_file_cnt >= 100) ? file_cnt / (tot_file_cnt / 100) : 100;
             int seconds = (int) elapsed_time(start_time);
             int sec = seconds % 60;
             int min = (seconds / 60) % 60;
@@ -361,7 +360,7 @@ int main(int argc, char** argv)
                    loss / word_cnt,pct,
                    file_cnt,tot_file_cnt,word_cnt,hours,min,sec);
             fflush(stdout);
-        }                                                    
+        }
     }
     fclose(lfp);
 
