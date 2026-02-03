@@ -4,7 +4,7 @@
 #include <math.h>
 #include "mem.h"
 #include "array.h"
-#include "scaler.h"
+#include "normalize.h"
 #include "pca.h"
 #include "irisfile.h"
 
@@ -29,9 +29,10 @@ int main(int argc, char** argv)
     if (!ok)
         return -1;
 
-    SCALER* s = scaler_init(0,nfeatures,0);
-    scaler_normalize(s,x,nsamples,1);
-    scaler_free(s);
+    float mean[nfeatures];
+    float sdev[nfeatures];
+    calculate_mean_sdev(x,nsamples,nfeatures,mean,sdev,0);
+    normalize(x,nsamples,nfeatures,mean,sdev,0);
     PCA(x,r,nsamples,nfeatures,ncomponents);
 #ifdef HAS_PLOT
     {

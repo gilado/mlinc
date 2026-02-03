@@ -12,6 +12,7 @@
 #include "dense.h"
 #include "clip.h"
 #include "cossim.h"
+#include "normalize.h"
 #include "pca.h"
 char *sentences[] = {
     "At dawn, the skilled carpenter began crafting a beautiful wooden table for the village square.",
@@ -110,7 +111,7 @@ static inline void swap_rows(fArr2D a_, int M, int N, int i, int j)
 
 /* Shuffles the rows of arrays a[M][N], and l[M][1]
  */
-static void shuffle_samples(fArr2D a, fArr2D l,int M, int N)
+static void shuffle_samples(fArr2D a, fArr2D l, int M, int N)
 {
     for (int i = M - 1; i > 0; i--) {
         int j = (int) urand(0.0,1.0 + i);
@@ -344,6 +345,12 @@ int test_word_embeddings(int cxt_size, int embedding_dim,
         /* add king - man + woman vector; it's index == test_words_size */
         fltcpy(x[nsamples - 1],female_king_vec,embedding_dim);
         vector_names[nsamples - 1] = "king - man + woman";
+
+        float mean[embedding_dim];
+        float sdev[embedding_dim];
+        calculate_mean_sdev(x,nsamples,embedding_dim,mean,sdev,0);
+        for (int i = 0; i < embedding_dim; i++) sdev[i] = 1;
+        normalize(x,nsamples,embedding_dim,mean,sdev,0);
 
         PCA(x,r,nsamples,embedding_dim,rdim);
         plot_embeddings(r,nsamples,vector_names,"PCA of word embeddings");
