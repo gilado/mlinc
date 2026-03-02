@@ -6,8 +6,9 @@
 
 /* Stores frequency of a word in the dataset */
 typedef struct wrdfrq_s {
-    int inx; /* Word index in hashmap */
-    int cnt; /* Number of times word was encountered in the txt */
+    int inx;   /* Word index in hashmap                            */
+    int cnt;   /* Number of times word was encountered in the txt  */
+    float frq; /* Frequency of word - not computed or updated here */
 } WRDFRQ;
 
 /* Processes a text file to create a word vocabulary, a word frequency table,
@@ -22,30 +23,28 @@ typedef struct wrdfrq_s {
  *   word_freq  - An array of size max_vocab, where each entry is incremented
  *                by the number of times the corresponding word appears in the
  *                text file (optional, requires hmap).
- *   stop_hmap  - Hashmap that stores stop words to be excluded from word
- *                vocabulary (optional).
  *   file_words - An array of size max_words, which stores the hashmap index
  *                for each word encountered in the file. If add_new is zero,
  *                words not in the vocabulary are ignored (skipped).
  *   max_words  - Size of file_words array
  *
  * Returns:
- *   - If hmap is not NULL: Returns the number of words that were not skipped.
- *   - If hmap is NULL: Returns the total number of words.
- *   - Returns -1 on error.
+ *  - If hmap is not NULL: Returns the number of words that were not skipped.
+ *  - If hmap is NULL: Returns the total number of words.
+ *  - Returns -1 on error.
  *
  * Notes:
- *   - Only consider alphabetic character sequences, delimited by
- *     non-alphabetic characters, as words.
- *   - Convert all alphabetic characters to lowercase before further processing.
- *   - For example: "King", "king", "king's" => "king"
- *                  "Kings", "kings", "kings'" => "kings".
+ *  - The frq field of word_freq array elements is not updated by this funciton
+ *  - Only consider alphabetic character sequences, delimited by
+ *    non-alphabetic characters, as words.
+ *  - Convert all alphabetic characters to lowercase before further processing.
+ *    For example: "King", "king", "king's" => "king"
+ *                 "Kings", "kings", "kings'" => "kings".
  */
 int process_news_file(const char* file_name,
                       const char* file_dir,
                       HASHMAP* hmap, int add_new,
                       int max_vocab, WRDFRQ* word_freq,
-                      HASHMAP* stop_hmap,
                       int *file_words, int max_words);
 
 /* Reads a list file containing file names (one per line), filters to include

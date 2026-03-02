@@ -8,6 +8,7 @@
 #include <ctype.h>
 #include <math.h>
 #include <getopt.h>
+#include <omp.h>
 #include "mem.h"
 #include "float.h"
 #include "etime.h"
@@ -18,22 +19,21 @@
 #include "newsfile.h"
 #include "loss.h"
 #include "embedding.h"
-#include "dense.h"
-#include "model.h"
 
 const char* usage =
 "Usage: word2vec [options]\n"
 "Options:\n"
 "  -h                Show this help message\n"
-"  -b <batch_size>   Set batch size (default 100)\n"
-"  -c <context_size> Set context size (must be even, default 4)\n"
-"  -d <embedding_dim>Set embedding dimension (default 50)\n"
-"  -e <num_epochs>   Set number of epochs (default 1)\n"
+"  -b <batch_size>   Set batch size (default 16)\n"
+"  -c <context_size> Set context size (must be even, default 8)\n"
+"  -d <embedding_dim>Set embedding dimension (default 100)\n"
+"  -e <num_epochs>   Set number of epochs (default 5)\n"
 "  -i <train_file>   Set training files list path\n"
 "  -o <output_file>  Set output embedding file path\n"
-"  -r <learning_rate>Set learning rate (default 0.01)\n"
+"  -r <learning_rate>Set starting learning rate (default 0.05)\n"
+"  --rd=<f>          Learning rate decay (default 0.8)\n"
 "  --vocab-size=<n>  Limit vocabulary size\n"
-"  --vocab-coverage=<f> Limit vocabulary coverage (fraction)\n"
+"  --vocab-coverage=<f> Limit vocabulary coverage (default 0.95)\n"
 "  --print-vocab     Print vocabulary and exit\n"
 ;
 
@@ -94,8 +94,8 @@ static void shuffle_samples(fArr2D a, fArr2D l, int M, int N)
 
 static inline float clip_grad(float g)
 {
-    const float gmax = 1;
-    const float gmin = 1e-3;
+    const float gmax = 5;
+    const float gmin = 1e-6;
     float m = fabsf(g);
     if (m > gmax)
         g = (g > 0) ? gmax : -gmax;
@@ -230,7 +230,7 @@ float negative_sampling_loss(
 }
 
 /* Compare two word frequency values - used with qsort to order
- * words based on their frequency in descnding order,
+ * words based on their frequency in descending order,
  * that is, most frequent word first.
  */
 int qsort_compare_word_freq(const void *a, const void *b)
@@ -247,7 +247,7 @@ typedef struct wrdsim_s {
 } WRDSIM;
 
 /* Compare two consine similarity values - used with qsort to order
- * words that are similar to a reference word in descnding order,
+ * words that are similar to a reference word in descending order,
  * that is, most similar (higest cosine similarity value) first.
  */
 int qsort_compare_similarity(const void *a, const void *b)
@@ -276,11 +276,12 @@ int main(int argc, char** argv)
     char* embedding_file = "word2vec.test.model"; /* Output */
     float vocab_coverage = 0.95; /* 95% */
     int vocab_size = 0; /* Default: size derived from vocab_coverage */
-    int embedding_dim = 50;
-    int batch_size = 100;
-    int cxt_size = 4;
-    int num_epochs = 10;
-    float learning_rate = 0.01;
+    int embedding_dim = 100;
+    int batch_size = 16;
+    int cxt_size = 8;
+    int num_epochs = 5;
+    float learning_rate = 0.05;
+    float learning_rate_decay = 0.8;
     int print_vocab = 0;
     int max_vocab = 3000000;   /* Set to 3 x expected number of unique words */
     int hash_mem = 10000000;   /* hashmap will increase this value as needed */
@@ -298,6 +299,9 @@ int main(int argc, char** argv)
             case 'o': embedding_file = optarg; break;
             case 'r': learning_rate = atof(optarg); break;
             case '-':
+                if (strncmp(optarg,"rd=",3) == 0)
+                    learning_rate_decay = atof(optarg+3);
+                else
                 if (strncmp(optarg,"vocab-size=",11) == 0)
                     vocab_size = atoi(optarg+11);
                 else
@@ -327,8 +331,9 @@ int main(int argc, char** argv)
     printf("Trains an embedding layer to create word embeddings using\n");
     printf("Continuous Bag of Words (CBOW) method\n");
     printf("context size = %d, embedding dim = %d, batch size = %d\n"
-           "%d epochs, learning_rate = %g\n\n",
-           cxt_size,embedding_dim,batch_size,num_epochs,learning_rate);
+           "%d epochs, learning_rate = %g learning_rate_decay = %g\n",
+           cxt_size,embedding_dim,batch_size,
+           num_epochs,learning_rate,learning_rate_decay);
     fflush(stdout);
 
     int tot_file_cnt = 0; /* Total number of files    */
@@ -342,7 +347,7 @@ int main(int argc, char** argv)
 
     printf("Loading stop words\n");
     stop_cnt += process_news_file(stopwords_file,NULL,
-                                     stop_hmap,1,max_vocab,NULL,NULL,NULL,0);
+                                  stop_hmap,1,max_vocab,NULL,NULL,0);
 
     printf("Creating vocabulary from dataset\n");
     fflush(stdout);
@@ -360,7 +365,7 @@ int main(int argc, char** argv)
     for (int i = 0; i < num_files; i++) {
         tot_file_cnt++;
         tot_word_cnt += process_news_file(file_list[i],data_dir,
-                                hmap,1,max_vocab,word_freq,stop_hmap,NULL,0);
+                                          hmap,1,max_vocab,word_freq,NULL,0);
     }
 
     printf("Dataset: %d files, %d words, ",tot_file_cnt,tot_word_cnt);
@@ -405,18 +410,22 @@ int main(int argc, char** argv)
     hashmap_str2inx(hmap2,"",1); /* Reserve first entry (index 0) for pad */
 
     /* Add words up to vocabulary size (pad already included) */
-    for (int i = 0; i < vocab_size - 1;) {
+    for (int i = 0, j = 0; i < vocab_size - 1 && j < vocab_size - 1; i++) {
         const char* wrd = hashmap_inx2str(hmap,word_freq[i].inx);
         if (strlen(wrd) == 0)
             continue;
         int inx = hashmap_str2inx(hmap2,wrd,1);
-        word_freq[i].inx = inx;
-        i++;
+        word_freq[j++].inx = inx;
     }
     hashmap_free(hmap);
     hmap = hmap2;
     hmap2 = NULL;
 
+    printf("Calculate word frequencies\n");
+    for (int i = 0; i < vocab_size; i++) {
+        word_freq[i].frq = ((float) word_freq[i].cnt) / word_cnt;
+    }
+    
     printf("Creating vocabulary distribution table\n");
     fflush(stdout);
     float dist_compress = 0.75;
@@ -429,15 +438,16 @@ int main(int argc, char** argv)
     }
     int* dist_table = allocmem(dist_table_size,1,int);
     printf("Distribution table size %d\n",dist_table_size);
-    /* Populate table */
-    for (int i = 0, j = 0; i < vocab_size; i++) {
+
+    /* Populate table, note pad (i == 0) is ecluded */
+    for (int i = 1, j = 0; i < vocab_size; i++) {
         int inx = word_freq[i].inx;
         int freq = word_freq[i].cnt;
         int rpt = (int)(pow(freq,dist_compress)/dist_scale) + 1;
         for (int k = 0; j < dist_table_size && k < rpt; k++)
             dist_table[j++] = inx;
     }
-
+    
     if (print_vocab) {
         printf("ord   index count word\n");
         for (int i = 0; i < vocab_size; i++) {
@@ -460,7 +470,7 @@ int main(int argc, char** argv)
     /* Create and initialize layers */
     EMBEDDING* embedding = embedding_create(embedding_dim,cxt_size,0);
     embedding_init(embedding,vocab_size,batch_size);
-    /* Negative sampling only uses an output wieghts matrix */
+    /* Negative sampling only uses an output weights matrix */
     fArr2D Wo = create_output_weights(vocab_size,embedding_dim);
 
     /* Allocate memory for gradients */
@@ -480,8 +490,20 @@ int main(int argc, char** argv)
         shuffle_list(file_list,num_files);
         for (int i = 0; i < num_files; i++) {
             file_cnt++;
-            int cnt = process_news_file(file_list[i],data_dir,
-                       hmap,0,max_vocab,NULL,NULL,file_words,max_file_words);
+            int fwcnt = process_news_file(file_list[i],data_dir,
+                              hmap,0,max_vocab,NULL,file_words,max_file_words);
+
+            /* Sub sample frequent words by removing some */
+            int cnt = 0;
+            for (int i = 0; i < fwcnt; i++) {
+                float r = urand(0,1.0);
+                float t = 1e-5;
+                float f = word_freq[file_words[i]].frq;
+                float p = (sqrt(f / t) + 1.0) * (t / f);
+                if (p > 1.0) p = 1.0;
+                if (r < p)
+                    file_words[cnt++] = file_words[i];
+            }
 
             /* Process each word in current file */
             for (int i = 0; i < cnt; i += batch_size) {
@@ -528,35 +550,41 @@ int main(int argc, char** argv)
                 update(embedding->Wx,gWx[0],embedding->D,embedding->E,learning_rate);
                 update(Wo,gWx[1],embedding->D,embedding->E,learning_rate);
 
-
-
-
                 word_cnt += wcnt;
                 int pct = (tot_file_cnt >= 1) ? (((float)file_cnt / tot_file_cnt) * 100) : 100;
                 int seconds = (int) elapsed_time(start_time);
                 int sec = seconds % 60;
                 int min = (seconds / 60) % 60;
                 int hours = seconds / 3600;
-                printf("epoch %3d loss %5.2f %3d%% "
+                printf("epoch %2d lr %5.3f loss %6.4f %3d%% "
                        "(file %d of %d, %d words) %d:%02d:%02d\r",
-                       epoch,loss / word_cnt,pct,
+                       epoch,learning_rate,loss / word_cnt,pct,
                        file_cnt,tot_file_cnt,word_cnt,hours,min,sec);
                 fflush(stdout);
             }
         }
         printf("\n");
+        learning_rate = learning_rate_decay * learning_rate;
     }
 
     printf("\n");
     printf("Saving word embeddings to %s\n",embedding_file);
     FILE* fp = fopen(embedding_file,"wb");
     if (fp != NULL) {
+        printf("#,vocab_size,%d,embedding_dim,%d,"
+               "learning_rate,%f,learning_rate_decay,%f,epochs,%d\n",
+                vocab_size,embedding_dim,
+                learning_rate,learning_rate_decay,num_epochs);
+
         typedef float (*ArrDE)[embedding->E];
         ArrDE Wx = (ArrDE) embedding->Wx;
-        for (int i = 0; i < vocab_size; i++) {
-            fprintf(fp,"%d,%s",i,hashmap_inx2str(hmap,i));
+        for (int wrdinx = 0; wrdinx < vocab_size; wrdinx++) {
+            const char* word = hashmap_inx2str(hmap,wrdinx);
+            if (strlen(word) == 0)
+                word = "<unk>";
+            fprintf(fp,"%d,%s",wrdinx,word);
             for (int j = 0; j < embedding_dim; j++)
-                fprintf(fp,",%10.8f",Wx[i][j]);
+                fprintf(fp,",%10.8f",Wx[wrdinx][j]);
             fprintf(fp,"\n");
         }
         fclose(fp);
