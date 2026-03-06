@@ -64,6 +64,48 @@ void mha_init(MHA* l, int input_dim, int batch_size, int training);
 
 void mha_free(MHA* l);
 
+/*
+ * mha_forward - forward pass of Multi-Head Attention (MHA) layer
+ *
+ * This function computes the multi-head attention output for a batch
+ * of sequences, including optional causal masking and padding masks.
+ * It supports training-time backward buffers but does not modify them
+ * in this function.
+ *
+ * Parameters:
+ *   l         : Pointer to the MHA layer structure containing weights,
+ *               buffers, and dimensions.
+ *   X         : Input 2D array of shape [B*T][D], where:
+ *               B = batch size, T = sequence length, D = model dimension.
+ *   pad_mask  : Optional integer array of length [B*T];
+ *               entries are 1 for real tokens, 0 for padding.
+ *               If NULL, no padding mask is applied.
+ *   Y         : Output 2D array of shape [B*T][D];
+                 if NULL, output projection is skipped.
+ *   mask      : Integer flag. If non-zero, causal (future) masking is
+ *               applied to prevent attention to future positions in each
+ *               sequence (used in decoder).
+ *   lyr       : Layer index.
+ *
+ * Behavior:
+ *   1. Projects input X into query (Q), key (K), and value (V) matrices
+ *      using learned weights.
+ *   2. Splits Q, K, V into H attention heads of dimension Dh = D/H.
+ *   3. Computes scaled dot-product attention for each head:
+ *      - Qh @ Kh^T / sqrt(Dh)
+ *      - Applies causal mask if mask != 0
+ *      - Applies column-wise padding mask if pad_mask is provided
+ *      - Applies row-wise softmax to get attention weights
+ *      - Multiplies attention weights with Vh
+ *   4. Concatenates head outputs and applies the output projection
+ *      Wo if Y != NULL.
+ *
+ * Note: Padding is not allowed at the beginning of a sequence; only
+ *       trailing (right-aligned) padding is supported.
+ *
+ * References:
+ *   - Vaswani et al., "Attention Is All You Need", 2017
+ */
 static inline void mha_forward(MHA* restrict l,
                                const fArr2D restrict X/*[BT][D]*/,
                                const iVec restrict pad_mask/*[BT]*/,
@@ -121,18 +163,18 @@ static inline void mha_forward(MHA* restrict l,
                 fltcpy(&Vh[t][0], &V[r][h*Dh], Dh);
             }
 
-            /* Eq. (1), page 4: Q @ K.T */
+            /* Compute attention scores - Eq. (1), page 4: Q @ K.T */
             matmulT(Scores, Qh, Kh, T, Dh, T);
 
-            /* Scale by sqrt(dk) - Eq. (1) */
+            /* Scale by sqrt(dk) (numerical stability) - Eq. (1) */
             float s = 1.0f / sqrtf((float)Dh);
-            for(int i=0;i<T;i++)
-              for(int j=0;j<T;j++)
-                Scores[i][j] *= s;
+            for(int i = 0; i < T; i++)
+                for(int j = 0; j < T; j++)
+                    Scores[i][j] *= s;
 
             if (mask) {
-                /* Optional mask - Fig. 2, page 4 */
-                /* Also section 3.2.3, page 5     */
+                /* Prevent attending to future positions - Fig. 2, page 4 */
+                /* Also section 3.2.3, page 5 */
                 for (int i = 0; i < T; i++)
                     for (int j = i + 1; j < T; j++)
                         Scores[i][j] = -1e9f;
@@ -145,9 +187,10 @@ static inline void mha_forward(MHA* restrict l,
                             Scores[j][i] = -1e9f;
             }
 
-            /* Softmax - Eq. (1) */
+            /* Compute attention probabilities - Softmax - Eq. (1) */
             softmax(Scores, T, T);
 
+            /* Att and Scores could be same buffer, but this is clearer */
             fltcpy(Att, Scores, T * T);
 
             /* Eq. (1): Attention @ V */
@@ -166,9 +209,9 @@ static inline void mha_forward(MHA* restrict l,
       matmul(Y, Out, Wo, BT, D, D);
 }
 
-static inline void mha_backward(MHA* restrict l, 
-                                fArr2D restrict dY /*[BT][D]*/, 
-                                const fArr2D restrict X/*[BT][D]*/, 
+static inline void mha_backward(MHA* restrict l,
+                                fArr2D restrict dY /*[BT][D]*/,
+                                const fArr2D restrict X/*[BT][D]*/,
                                 fArr2D dX,
                                 int lyr)
 {
@@ -242,6 +285,7 @@ static inline void mha_backward(MHA* restrict l,
             matmulT(dAtt, dOh, Vh, T, Dh, T);
 
             /* softmax backward - Eq. (1), Jacobian */
+            /* dAtt and dScores could be same buffer, but this is clearer */
             softmax_backward(dScores, dAtt, Att, T, T);
 
             float s = 1.0f / sqrtf((float)Dh);

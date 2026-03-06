@@ -13,7 +13,7 @@
  *
  * Parameters:
  *   units      - Number of cells (hidden size)
- *   activation - String, can be one of "none", "sigmoid", "relu", or "Softmax"
+ *   activation - Can be one of "none", "sigmoid", "relu", "gelu", or "Softmax"
  *
  * Returns:
  *   Pointer to a dense neural network layer.
@@ -29,6 +29,7 @@ DENSE* dense_create(int units, char* activation)
     if (!strcasecmp("none",activation)) l->activation = 'n';
     if (!strcasecmp("sigmoid",activation)) l->activation = 's';
     if (!strcasecmp("relu",activation)) l->activation = 'r';
+    if (!strcasecmp("gelu",activation)) l->activation = 'g';
     if (!strcasecmp("softmax",activation)) l->activation = 'S';
     if (l->activation == 0) {
         freemem(l);
@@ -53,6 +54,8 @@ void dense_init(DENSE* l, int input_dim, int batch_size)
     l->B = batch_size;
     l->Wx = allocmem(l->D,l->S,float);
     l->h = allocmem(l->B,l->S,float);
+    if (l->activation == 'g')
+        l->z = allocmem(l->B,l->S,float);
 
     typedef float (*ArrDS)[l->S];
     ArrDS Wx = (ArrDS) l->Wx;
@@ -76,9 +79,13 @@ void dense_set_batch_size(DENSE* l, int batch_size)
     if (l->B == 0)
         return;
     if (batch_size != l->B) {
-        freemem(l->h);
         l->B = batch_size;
+        freemem(l->h);
         l->h = allocmem(l->B,l->S,float);
+        if (l->activation == 'g') {
+            freemem(l->z);
+            l->z = allocmem(l->B,l->S,float);
+        }
     }
     else
         fltclr(l->h,l->B * l->S);
@@ -92,6 +99,8 @@ void dense_set_batch_size(DENSE* l, int batch_size)
 void dense_free(DENSE* l)
 {
     freemem(l->h);
+    if (l->activation == 'g')
+        freemem(l->z);
     freemem(l->Wx);
     freemem(l);
 }

@@ -12,13 +12,14 @@ typedef struct dense_s {
   char activation; /* n(one) s(igmoid) r(elu) (S)oftmax        */
   fArr2D h;        /* Hidden State matrix [B][S]               */
   fArr2D Wx;       /* Weights matrix [D][S]                    */
+  fArr2D z;        /* Pre-activation values of h (gelu only)   */
 } DENSE;
 
 /* Creates a feed forward neural network.
  *
  * Parameters:
  *   units      - Number of cells (hidden size)
- *   activation - String, can be one of "none", "sigmoid", "relu", or "Softmax"
+ *   activation - Can be one of "none", "sigmoid", "relu", "gelu", or "Softmax"
  *
  * Returns:
  *   Pointer to a dense neural network.
@@ -87,6 +88,7 @@ static inline fArr2D dense_forward(DENSE* restrict l,
     switch (l->activation) {
         case 's' : sigmoid(l->h,l->B,l->S); break;
         case 'r' : relu(l->h,l->B,l->S); break;
+        case 'g' : fltcpy(l->z,l->h,l->B * l->S); gelu(l->h,l->B,l->S); break;
         case 'S' : softmax(l->h,l->B,l->S); break;
     }
     return l->h;
@@ -127,6 +129,9 @@ static inline void dense_backward(DENSE* restrict l,
             break;
         case 'r':
             d_relu(dy, l->h, l->B, l->S);
+            break;
+        case 'g':
+            d_gelu(dy, l->z, l->B, l->S);
             break;
         /* Softmax intentionally excluded:
          * dy must already be (y_pred - y_true)

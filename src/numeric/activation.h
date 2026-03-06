@@ -11,17 +11,17 @@
  *   B  : Number of rows in the matrix
  *   S  : Number of columns in the matrix
  */
-static inline void sigmoid(fArr2D m_/*[B][S]*/, int B, int S) 
+static inline void sigmoid(fArr2D m_/*[B][S]*/, int B, int S)
 {
     typedef float (*ArrBS)[S];
     ArrBS m = (ArrBS) m_;
 
-    for (int i = 0; i < B; i++)    
-        for (int j = 0; j < S; j++)    
+    for (int i = 0; i < B; i++)
+        for (int j = 0; j < S; j++)
             m[i][j] = 1.0 / (1.0 + exp(-m[i][j]));
 }
 
-/* Applies the rectified linear unit (ReLU) activation function to each 
+/* Applies the rectified linear unit (ReLU) activation function to each
  * element of a 2D array.
  *
  * Parameters:
@@ -29,16 +29,44 @@ static inline void sigmoid(fArr2D m_/*[B][S]*/, int B, int S)
  *   B  : Number of rows in the matrix
  *   S  : Number of columns in the matrix
  */
-static inline void relu(fArr2D m_/*[B][S]*/, int B, int S) 
+static inline void relu(fArr2D m_/*[B][S]*/, int B, int S)
 {
     typedef float (*ArrBS)[S];
     ArrBS m = (ArrBS) m_;
 
-    for (int i = 0; i < B; i++)    
-        for (int j = 0; j < S; j++)    
+    for (int i = 0; i < B; i++)
+        for (int j = 0; j < S; j++)
             if (m[i][j] < 0.0)
                 m[i][j] = 0.0;
 }
+
+/* Applies the Gaussian Error Linear Unit (GELU) activation function to each
+ * element of a 2D array.
+ *
+ * Parameters:
+ *   m  : Pointer to the 2D array to be processed
+ *   B  : Number of rows in the matrix
+ *   S  : Number of columns in the matrix
+ *
+ * Reference:
+ *   Hendrycks & Gimpel, 2016. "Gaussian Error Linear Units (GELUs)"
+ */
+static inline void gelu(fArr2D m_/*[B][S]*/, int B, int S)
+{
+    typedef float (*ArrBS)[S];
+    ArrBS m = (ArrBS) m_;
+    const float sqrt_2_over_pi = 0.7978845608028654; /* sqrt(2/pi) */
+
+    for (int i = 0; i < B; i++) {
+        for (int j = 0; j < S; j++) {
+            float x = m[i][j];
+            /* Approximate the Cumulative Distribution Function */
+            float tanh_arg = sqrt_2_over_pi * (x + 0.044715 * x * x * x);
+            m[i][j] = 0.5f * x * (1.0f + tanhf(tanh_arg));
+        }
+    }
+}
+
 
 /* Applies the softmax activation function to each row of a 2D array
  *
@@ -61,7 +89,7 @@ static inline void softmax(fArr2D a_/*[B][K]*/, int B, int K)
     typedef float (*ArrBK)[K];
     ArrBK a = (ArrBK) a_;
     for (int j = 0; j < B; j++) {
-        typedef float (*VecK); 
+        typedef float (*VecK);
         VecK  p = (VecK) a[j];
 
         float m = p[0]; /* max(p[]) */
@@ -94,9 +122,9 @@ static inline float d_sigmoid_1(float z)
     return z * (1 - z);
 }
 
-/* Calculates the derivative of the sigmoid function for a 2D array z, and 
- * updates the input array x, by multiplying its original values by the 
- * derivative. 
+/* Calculates the derivative of the sigmoid function for a 2D array z, and
+ * updates the input array x, by multiplying its original values by the
+ * derivative.
  *
  * Parameters:
  *   x : Pointer to the 2D array to be updated
@@ -104,16 +132,16 @@ static inline float d_sigmoid_1(float z)
  *   B : Number of rows in the matrices
  *   D : Number of columns in the matrices
  */
-static inline void d_sigmoid(fArr2D x_/*[B][D]*/, 
-                             const fArr2D z_/*[B][D]*/, 
+static inline void d_sigmoid(fArr2D x_/*[B][D]*/,
+                             const fArr2D z_/*[B][D]*/,
                              int B, int D)
 {
     typedef float (*ArrBD)[D];
     ArrBD x = (ArrBD) x_;
     const ArrBD z = (const ArrBD) z_;
-    
-    for (int i = 0; i < B; i++)    
-        for (int j = 0; j < D; j++)    
+
+    for (int i = 0; i < B; i++)
+        for (int j = 0; j < D; j++)
             x[i][j] *= d_sigmoid_1(z[i][j]);
 }
 
@@ -130,9 +158,9 @@ static inline float d_relu_1(float z)
     return (z > 0.0) ? 1.0 : 0.0;
 }
 
-/* Calculates the derivative of the ReLU function for a 2D array z, and 
- * updates the input array x, by multiplying its original values by the 
- * derivative. 
+/* Calculates the derivative of the ReLU function for a 2D array z, and
+ * updates the input array x, by multiplying its original values by the
+ * derivative.
  *
  * Parameters:
  *   x : Pointer to the 2D array to be updated
@@ -141,16 +169,55 @@ static inline float d_relu_1(float z)
  *   D : Number of columns in the matrices
  */
 static inline void d_relu(fArr2D x_/*[B][D]*/,
-                          const fArr2D z_/*[B][D]*/, 
+                          const fArr2D z_/*[B][D]*/,
                           int B, int D)
 {
     typedef float (*ArrBD)[D];
     ArrBD x = (ArrBD) x_;
     const ArrBD z = (const ArrBD) z_;
-    
-    for (int i = 0; i < B; i++)    
-        for (int j = 0; j < D; j++)    
+
+    for (int i = 0; i < B; i++)
+        for (int j = 0; j < D; j++)
             x[i][j] *= d_relu_1(z[i][j]);
+}
+
+/* Calculates the derivative of the GELU function at point z using the
+ * approximate tanh formulation.
+ *
+ * Parameters:
+ *   z : The input to GELU (pre-activation)
+ */
+static inline float d_gelu_1(float z)
+{
+    const float sqrt_2_over_pi = 0.7978845608028654; /* sqrt(2/pi) */
+    float z3 = z * z * z;
+    float tanh_arg = 0.044715f * z3 + z;
+    float tanh_val = tanhf(sqrt_2_over_pi * tanh_arg);
+    float sech2 = 1.0 - tanh_val * tanh_val;
+    float cubic_deriv = 1.0 + 3.0 * 0.044715 * z * z;
+    return 0.5 * (1.0 + tanh_val + z * sech2 * sqrt_2_over_pi * cubic_deriv);
+}
+
+/* Calculates the derivative of GELU for a 2D array z, and updates the input
+ * array x by multiplying its original values by the derivative.
+ *
+ * Parameters:
+ *   x : Pointer to the 2D array to be updated
+ *   z : Pointer to the 2D array, the input to GELU
+ *   B : Number of rows in the matrices
+ *   D : Number of columns in the matrices
+ */
+static inline void d_gelu(fArr2D x_/*[B][D]*/,
+                          const fArr2D z_/*[B][D]*/,
+                          int B, int D)
+{
+    typedef float (*ArrBD)[D];
+    ArrBD x = (ArrBD) x_;
+    const ArrBD z = (const ArrBD) z_;
+
+    for (int i = 0; i < B; i++)
+        for (int j = 0; j < D; j++)
+            x[i][j] *= d_gelu_1(z[i][j]);
 }
 
 /* Backward pass for softmax activation.
@@ -194,7 +261,7 @@ static inline void softmax_backward(fArr2D dScores/*[B][D]*/,
  * cross entropy loss for a 2D array z, and updates the input array x,
  * by multiplying its original values by the derivative.
  *
- * This function assumes that the loss function is cross-entropy, 
+ * This function assumes that the loss function is cross-entropy,
  * simplifying the gradient calculation.
  *
  * Parameters:
@@ -207,16 +274,16 @@ static inline void softmax_backward(fArr2D dScores/*[B][D]*/,
  * Reference:
  *   https://eli.thegreenplace.net/2016/the-softmax-function-and-its-derivative
  */
-static inline void d_softmax(fArr2D x_/*[B][D]*/, 
-                             const fArr2D z_/*[B][D]*/, 
-                             const fArr2D yt_/*[B][D]*/, 
+static inline void d_softmax(fArr2D x_/*[B][D]*/,
+                             const fArr2D z_/*[B][D]*/,
+                             const fArr2D yt_/*[B][D]*/,
                              int B, int D)
 {
     typedef float (*ArrBD)[D];
     ArrBD x = (ArrBD) x_;
     const ArrBD z = (const ArrBD) z_;
     const ArrBD yt = (ArrBD) yt_;
-    
+
     for (int i = 0; i < B; i++)
         for (int j = 0; j < D; j++)
             x[i][j] *= z[i][j] * (yt[i][j] - z[i][j]);
@@ -230,7 +297,7 @@ static inline void d_softmax(fArr2D x_/*[B][D]*/,
  * Note:
  * The canonical definition of d/dx tanh(x) is (1 / cosh(x)^2); this function
  * uses an equivalnet.
- */ 
+ */
 static inline float d_tanh(float x)
 {
     return 1 - pow(tanh(x),2);
