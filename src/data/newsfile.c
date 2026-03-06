@@ -62,18 +62,26 @@ int process_news_file(const char* file_name,
     int file_word_cnt = 0;  /* Number of words in the file           */
 
     int maxpath = 512;
-    char filepath[maxpath * 3];
-    filepath[0] = '\0';
-    if (file_dir != NULL)
-        strncpy(filepath,file_dir,maxpath);
-    filepath[maxpath - 1] = '\0';
-    int pfxlen = strlen(filepath);
-    if (pfxlen > 0 && filepath[pfxlen - 1] != '/') {
-        strcat(filepath,"/");
-        pfxlen = strlen(filepath);
+    char filepath[2 * maxpath];
+
+    if (file_dir == NULL)
+        file_dir = ".";
+    int dir_len = strlen(file_dir);
+    if (dir_len > 0 && file_dir[dir_len - 1] == '/')
+        dir_len--;
+    if (dir_len > maxpath) {
+        fprintf(stderr,"In process_news_file: "
+                "file_dir too long: %d\n",dir_len);
+        return -1;
     }
-    strncpy(filepath + pfxlen,file_name,maxpath - pfxlen - 1);
-    filepath[maxpath - 1] = '\0';
+    int name_len = strlen(file_name);
+    if (name_len > maxpath) {
+        fprintf(stderr,"In process_news_file: "
+                "file_name too long: %d\n",name_len);
+        return -1;
+    }
+    snprintf(filepath,sizeof(filepath),
+             "%.*s/%.*s",dir_len,file_dir,name_len,file_name);
 
     FILE* fp = fopen(filepath,"rb");
     if (fp == NULL) {
@@ -84,7 +92,6 @@ int process_news_file(const char* file_name,
 
     for (;;) {
         cnt = fread(buffer + off,1,sizeof(buffer) - off - 1,fp) + off;
-        if (cnt < off) cnt = off;
         buffer[cnt] = '\0';
         char* w = first_letter(buffer);
         while (w != NULL) {
