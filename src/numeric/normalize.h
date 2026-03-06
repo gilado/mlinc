@@ -30,8 +30,8 @@ void calculate_mean_sdev(const fArr2D x_/*[M][D]*/,
                          fVec sdev/*[D | D-1]*/, 
                          int exc_last);
 
-/* Normilzes an array of feature vectors by feature in place, by subtracting
- * the corresponding mean and dividing by the corresponding sdev.
+/* Normalizes an array of feature vectors by feature (column-wise) in place, by
+ * subtracting the corresponding mean and dividing by the corresponding sdev.
  *
  * Parameters:
  *   x        - Array of M vectors, each having D elements
