@@ -23,18 +23,19 @@
 const char* usage =
 "Usage: word2vec [options]\n"
 "Options:\n"
-"  -h                Show this help message\n"
-"  -b <batch_size>   Set batch size (default 16)\n"
-"  -c <context_size> Set context size (must be even, default 8)\n"
-"  -d <embedding_dim>Set embedding dimension (default 100)\n"
-"  -e <num_epochs>   Set number of epochs (default 5)\n"
-"  -i <train_file>   Set training files list path\n"
-"  -o <output_file>  Set output embedding file path\n"
-"  -r <learning_rate>Set starting learning rate (default 0.05)\n"
-"  --rd=<f>          Learning rate decay (default 0.8)\n"
-"  --vocab-size=<n>  Limit vocabulary size\n"
+"  -h                 Show this help message, then exit\n"
+"  -b <batch_size>    Set batch size (default 16)\n"
+"  -c <context_size>  Set context size (must be even, default 8)\n"
+"  -d <embedding_dim> Set embedding dimension (default 100)\n"
+"  -e <num_epochs>    Set number of epochs (default 10)\n"
+"  -i <train_file>    Set training files list (def. news/data/tr_files.lst)\n"
+"  -o <output_file>   Set output embedding file (default word2vec.model)\n"
+"  -r <learning_rate> Set starting learning rate (default 0.05)\n"
+"  --rd=<f>           Learning rate decay (default 0.8)\n"
+"  --vocab-size=<n>   Limit vocabulary size\n"
 "  --vocab-coverage=<f> Limit vocabulary coverage (default 0.95)\n"
-"  --print-vocab     Print vocabulary and exit\n"
+"  --print-vocab      Print vocabulary and exit\n"
+"  --data_dir         Location of training data (defaule data/news)\n"
 ;
 
 /* Creates contexts for a text's words. one context per word.
@@ -273,13 +274,13 @@ int main(int argc, char** argv)
     char* data_dir = "data/news/data"; /* Input */
     char* tr_file = "data/news/tr_files.lst"; /* Input */
     char* stopwords_file = "data/news/stopwords.txt"; /* Input */
-    char* embedding_file = "word2vec.test.model"; /* Output */
+    char* embedding_file = "word2vec.model"; /* Output */
     float vocab_coverage = 0.95; /* 95% */
     int vocab_size = 0; /* Default: size derived from vocab_coverage */
     int embedding_dim = 100;
     int batch_size = 16;
     int cxt_size = 8;
-    int num_epochs = 5;
+    int num_epochs = 10;
     float learning_rate = 0.05;
     float learning_rate_decay = 0.8;
     int print_vocab = 0;
@@ -310,6 +311,9 @@ int main(int argc, char** argv)
                 else
                 if (strncmp(optarg,"print-vocab",11) == 0)
                     print_vocab = 1;
+                else
+                if (strncmp(optarg,"data-dir=",9) == 0)
+                    data_dir = optarg+9;
                 else
                     goto opterr;
             break;
@@ -439,7 +443,7 @@ int main(int argc, char** argv)
     int* dist_table = allocmem(dist_table_size,1,int);
     printf("Distribution table size %d\n",dist_table_size);
 
-    /* Populate table, note pad (i == 0) is ecluded */
+    /* Populate table, note pad (i == 0) is excluded */
     for (int i = 1, j = 0; i < vocab_size; i++) {
         int inx = word_freq[i].inx;
         int freq = word_freq[i].cnt;
@@ -508,9 +512,8 @@ int main(int argc, char** argv)
             /* Process each word in current file */
             for (int i = 0; i < cnt; i += batch_size) {
 
-                /* Create word contexts, which consist of cxt_size words that
-                 * are adjacent to the current word, exist in the vocabulary,
-                 * and are not stop words.
+                /* Create word contexts, which consist of cxt_size words
+                 * that are adjacent to the current word.
                  */
                 float contexts[batch_size][cxt_size];
                 float labels[batch_size][1];
@@ -571,8 +574,9 @@ int main(int argc, char** argv)
     printf("Saving word embeddings to %s\n",embedding_file);
     FILE* fp = fopen(embedding_file,"wb");
     if (fp != NULL) {
-        printf("#,vocab_size,%d,embedding_dim,%d,"
-               "learning_rate,%f,learning_rate_decay,%f,epochs,%d\n",
+        fprintf(fp,
+                "#,vocab_size,%d,embedding_dim,%d,"
+                "learning_rate,%f,learning_rate_decay,%f,epochs,%d\n",
                 vocab_size,embedding_dim,
                 learning_rate,learning_rate_decay,num_epochs);
 

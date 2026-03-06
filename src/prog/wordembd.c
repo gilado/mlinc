@@ -28,25 +28,26 @@ int precedence(char op)
 {
     switch (op) {
         case '+': case '-': return 1;
-        case '@': case '/': return 2;
+        case '/': return 2;
+        case '@': return 3;
     }
     return 0;
 }
 
 /* Evaluates an embedding expression and prints the result.
  *
- * The expression is given as a token array. Each token is either:
- *   - A non-negative integer: index into the embeddings array
- *   - A negative integer: ASCII code of an operator or parenthesis
+ * The expression is given as a token array. Each token is either a vectori,
+ * a scalar, or an operator.
  *
  * Supported operators:
  *   '+'  vector addition
  *   '-'  vector subtraction
+ *   '/'  division of vector by scalar
  *   '@'  cosine similarity (scalar result)
  *   '(' ')' grouping
  *
  * Operator precedence:
- *   1. Parentheses
+ *   1.  Parentheses
  *   2. '+' and '-' (left associative)
  *   3. '/' (division by a scalar)
  *   4. '@' (cosine similarity)
@@ -206,6 +207,7 @@ int main(int argc, char** argv)
     int vocab_size;
     int embedding_dim;
     float learning_rate;
+    float learning_rate_decay;
     int epochs;
     int cnt;
 
@@ -221,9 +223,11 @@ int main(int argc, char** argv)
     }
 
     cnt = fscanf(fp,
-                "#,vocab_size,%d,embedding_dim,%d,learning_rate,%f,epochs,%d",
-                &vocab_size,&embedding_dim,&learning_rate,&epochs);
-    if (cnt != 4) {
+                 "#,vocab_size,%d,embedding_dim,%d,"
+                 "learning_rate,%f,learning_rate_decay,%f,epochs,%d",
+                 &vocab_size,&embedding_dim,
+                 &learning_rate,&learning_rate_decay,&epochs);
+    if (cnt != 5) {
         fprintf(stderr,"'%s': Invalid file header format.\n", embfile);
         fclose(fp);
         exit(1);
