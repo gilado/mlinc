@@ -15,7 +15,7 @@ extern int32_t lrng_seed;
 void init_lrng(int seed);
 
 /* lrng returns a pseudo-random real number uniformly distributed 
- * between 0.0 and 1.0. 
+ * between 0.0 and 1.0, exclusive on both ends.
  * Lehmer random number generator - Steve Park & Dave Geyer
  */
 static inline float lrng(void)
@@ -25,8 +25,10 @@ static inline float lrng(void)
     const int32_t q = modulus / multiplier;
     const int32_t r = modulus % multiplier;
     int32_t t = multiplier * (lrng_seed % q) - r * (lrng_seed / q);
-    lrng_seed = (t > 0) ? t : t + modulus;
-    float num = ((float) lrng_seed / modulus);
+    int32_t v = (t > 0) ? t : t + modulus;
+    lrng_seed = v;
+    float num = ((float) v / modulus);
+    if (num >= 1.0f) num = nextafterf(1.0f, 0.0f); // Avoid float rounding
     return num;
 }
 
