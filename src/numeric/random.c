@@ -5,6 +5,8 @@
 int32_t lrng_seed = 96431; /* Prime number */
 void init_lrng(int seed)
 {
-    seed = seed & 0x7FFFFFFF;
+    int32_t m = 0x7FFFFFFF;
+    seed = seed & m;
+    if (seed == 0 || seed == m) seed = 1;
     lrng_seed = seed;
 }
