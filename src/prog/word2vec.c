@@ -93,19 +93,6 @@ static void shuffle_samples(fArr2D a, fArr2D l, int M, int N)
     }
 }
 
-static inline float clip_grad(float g)
-{
-    const float gmax = 5;
-    const float gmin = 1e-6;
-    float m = fabsf(g);
-    if (m > gmax)
-        g = (g > 0) ? gmax : -gmax;
-    else
-    if (m < gmin)
-        g = (g > 0) ? gmin : -gmin;
-    return g;
-}
-
 /* Updates layer's weights in a linear way:
  * weight = weight - learning_rate * weight_gradient
  * Wx:  weight matrix [D][N]
