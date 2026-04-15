@@ -99,7 +99,7 @@ see Plot.mk file for expected location of python libraries. Plotting can
 be turned off when compiling the code, using the NOPLOT flag\
 `$ make NOPLOT=Yes`
 
-### Obtainig test datasets
+### Obtaining test datasets
 
 Scripts in the scripts sub-directory fetch publicly available datasets
 for use in test programs. For example:\
