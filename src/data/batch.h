@@ -45,4 +45,10 @@ void batch_shuffle(BATCH* restrict b);
  */
 int batch_copy(BATCH* restrict b, fArr2D restrict x, fArr2D restrict y);
 
+/* Returns 1 if the most recent batch_copy() call exhausted a sequence
+ * (i.e. a sequence boundary was just crossed), 0 otherwise.
+ * Always returns 0 when data is not multi-sequence.
+ */
+int batch_eos(BATCH* restrict b);
+
 #endif

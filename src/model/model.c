@@ -470,7 +470,7 @@ void model_fit(MODEL* m,
                             loss / sample_cnt, match_cnt / sample_cnt,-1,-1);
             }
             model_update(m,learning_rate,weight_decay); /* Update weights */
-            if (cnt < B)
+            if (batch_eos(bTr))
                 reset_state(m);
         }
         loss /= sample_cnt;
@@ -523,7 +523,8 @@ void model_fit(MODEL* m,
                             loss,accuracy,
                             v_loss / v_sample_cnt, v_match_cnt / v_sample_cnt);
                 }
-                reset_state(m);
+                if (batch_eos(bVd))
+                    reset_state(m);
             }
             v_loss /= v_sample_cnt;
             v_accuracy = v_match_cnt / v_sample_cnt;

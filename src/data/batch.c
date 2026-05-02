@@ -189,3 +189,19 @@ int batch_copy(BATCH* restrict b, fArr2D restrict x, fArr2D restrict y)
     }
     return cnt;
 }
+
+/* Returns 1 if the most recent batch_copy() call exhausted a sequence
+ * (i.e. a sequence boundary was just crossed), 0 otherwise.
+ * Always returns 0 when data is not multi-sequence.
+ */
+int batch_eos(BATCH* restrict b)
+{
+    if (b->shufSeq == NULL)
+        return 0;
+    /* curVec == 0 means a sequence boundary was just crossed (curSeq was 
+     * incremented and curVec reset). curSeq == 0 is excluded because that
+     * would mean no data has been copied yet.
+     */
+    return (b->curVec == 0 && b->curSeq > 0) ? 1 : 0;
+}
+
