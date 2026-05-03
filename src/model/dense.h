@@ -9,7 +9,7 @@ typedef struct dense_s {
   int D;           /* Input vector dimension (including bias)  */
   int S;           /* Number of units, size of hidden state    */
   int B;           /* Number of input vectors in a batch       */
-  char activation; /* n(one) s(igmoid) r(elu) (S)oftmax        */
+  char activation; /* n,s,r,g,S (see below)                    */
   fArr2D h;        /* Hidden State matrix [B][S]               */
   fArr2D Wx;       /* Weights matrix [D][S]                    */
   fArr2D z;        /* Pre-activation values of h (gelu only)   */
@@ -27,6 +27,8 @@ typedef struct dense_s {
  * Notes:
  *   - The neural network needs to be further intialized using dense_init()
  *     before it can be used.
+ *   - Softmax is only supported with cross-entropy loss; the backward pass
+ *     expects dy = y_pred - y_true. See d_softmax_xe() in activation.h
  */
 DENSE* dense_create(int units, char* activation);
 
@@ -120,23 +122,25 @@ static inline void dense_backward(DENSE* restrict l,
                                   int lyr)
 {
     (void) lyr;
-    /* Gradient with respect to weights: gWx = X.T @ dy */
-    Tmatmul(gWx,X,dy,l->D,l->B,l->S);
 
     switch (l->activation) {
         case 's':
-            d_sigmoid(dy, l->h, l->B, l->S);
+            d_sigmoid(dy,l->h,l->B,l->S);
             break;
         case 'r':
-            d_relu(dy, l->h, l->B, l->S);
+            d_relu(dy,l->h,l->B,l->S);
             break;
         case 'g':
-            d_gelu(dy, l->z, l->B, l->S);
+            d_gelu(dy,l->z,l->B,l->S);
             break;
         /* Softmax intentionally excluded:
          * dy must already be (y_pred - y_true)
          */
     }
+
+    /* Gradient with respect to weights: gWx = X.T @ dy */
+    Tmatmul(gWx,X,dy,l->D,l->B,l->S);
+
     if (dx != NULL) {
         /* dx = (dy @ Wx.T) */
         matmulT(dx,dy,l->Wx,l->B,l->S,l->D);
