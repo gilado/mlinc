@@ -2,6 +2,7 @@
 /* Functions to clip array values       */
 #ifndef CLIP_H
 #define CLIP_H
+#include <math.h>
 
 /* Clips the values of gradients array g, so their magnitude is never larger
  * than gmax, nor smaller than gmin. This prevents numerical instability due
@@ -9,7 +10,6 @@
  * gradients. The down side is potential slower convergence, missing the true
  * local minima. However, in practice clipping leads to better accuracy.
  */
-
 static inline void clip_gradients(fArr2D ga_/*[M][N]*/, 
                                   int M, int N, 
                                   float gmin, float gmax)
@@ -22,10 +22,10 @@ static inline void clip_gradients(fArr2D ga_/*[M][N]*/,
             float g = ga[i][j];
             float m = fabsf(g);
             if (m > gmax)
-                g = (g > 0) ? gmax : -gmax;
+                g = !signbit(g) ? gmax : -gmax;
             else
             if (m < gmin)
-                g = (g > 0) ? gmin : -gmin;
+                g = !signbit(g) ? gmin : -gmin;
             ga[i][j] = g;
         }
     }
