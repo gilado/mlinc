@@ -220,73 +220,71 @@ static inline void d_gelu(fArr2D x_/*[B][D]*/,
             x[i][j] *= d_gelu_1(z[i][j]);
 }
 
-/* Backward pass for softmax activation.
- *
- * Computes the gradient of the loss with respect to the input scores of the softmax,
- * given the gradient with respect to the softmax output:
- *
- * dScores = J_softmax(Att) @ dAtt
- * where:
- *   - Att    : The output of the softmax function (attention weights)
- *   - dAtt   : The gradient of the loss with respect to the softmax output
- *   - dScores: The resulting gradient of the loss with respect to the input scores
- *              before softmax.
- * Reference:
- *   https://eli.thegreenplace.net/2016/the-softmax-function-and-its-derivative
- */
-static inline void softmax_backward(fArr2D dScores/*[B][D]*/,
-                                    const fArr2D dAtt/*[B][D]*/,
-                                    const fArr2D Att/*[B][D]*/,
-                                    int B, int D)
-{
-    typedef float (*ArrBD)[D];
-    ArrBD dS = (ArrBD) dScores;
-    const ArrBD dA = (const ArrBD) dAtt;
-    const ArrBD A = (const ArrBD) Att;
-
-    for (int i = 0; i < B; i++) {
-        float dot = 0.0f;
-
-        /* dot = sum_k dAtt[k] * Att[k] */
-        for (int k = 0; k < D; k++)
-            dot += dA[i][k] * A[i][k];
-
-        /* dScores[j] = Att[j] * (dAtt[j] - dot) */
-        for (int j = 0; j < D; j++)
-            dS[i][j] = A[i][j] * (dA[i][j] - dot);
-    }
-}
-
-/* Calculates the derivative of the softmax function combined with
- * cross entropy loss for a 2D array z, and updates the input array x,
- * by multiplying its original values by the derivative.
- *
- * This function assumes that the loss function is cross-entropy,
- * simplifying the gradient calculation.
+/* Computes the gradient of the loss with respect to the input scores of the softmax,
+ * given the gradient with respect to the softmax output: g = J_softmax(z) @ dz
  *
  * Parameters:
- *   x  : Pointer to the 2D array to be updated
- *   z  : Pointer to the 2D array, the output of the softmax function
- *   yt : Pointer to the 2D array of the target one-hot encoded values
+ *   g  : Pointer to output 2D array that receives the resulting gradients
+ *        of the loss with respect to the input scores before softmax.
+ *   dp : Pointer to 2D array of gradients of the loss with respect
+ *         to the softmax output
+ *   p  : Pointer to 2D array of the output of the softmax function
  *   B  : Number of rows in the matrices (batch size)
  *   D  : Number of columns in the matrices (number of classes)
  *
  * Reference:
  *   https://eli.thegreenplace.net/2016/the-softmax-function-and-its-derivative
  */
-static inline void d_softmax(fArr2D x_/*[B][D]*/,
-                             const fArr2D z_/*[B][D]*/,
-                             const fArr2D yt_/*[B][D]*/,
+static inline void d_softmax(fArr2D g_/*[B][D]*/,
+                             const fArr2D dp_/*[B][D]*/,
+                             const fArr2D p_ /*[B][D]*/,
                              int B, int D)
 {
     typedef float (*ArrBD)[D];
+    ArrBD g = (ArrBD) g_;
+    const ArrBD dp = (const ArrBD) dp_;
+    const ArrBD p = (const ArrBD) p_;
+
+    for (int i = 0; i < B; i++) {
+        float dot = 0;
+        for (int k = 0; k < D; k++)
+            dot += dp[i][k] * p[i][k];
+        for (int j = 0; j < D; j++)
+            g[i][j] = p[i][j] * (dp[i][j] - dot);
+    }
+}
+
+/* Computes the gradient of the combined softmax and cross-entropy loss
+ * with respect to the input scores, and scales the input array x by it.
+ *
+ * For softmax followed by cross-entropy loss, the gradient simplifies to:
+ *   dL/dz = p - y
+ * where p is the softmax output and y is the one-hot target.
+ *
+ * Parameters:
+ *   x  : Pointer to the 2D array to be scaled by the gradient
+ *   p  : Pointer to the 2D array of softmax output probabilities
+ *   yt : Pointer to the 2D array of one-hot encoded target values
+ *   B  : Number of rows in the matrices (batch size)
+ *   D  : Number of columns in the matrices (number of classes)
+ *
+ * Reference:
+ *   Dahal, Paras. (Jun 2017). Softmax and Cross Entropy Loss. 
+ *   https://parasdahal.com/softmax-crossentropy.
+ */
+static inline void d_softmax_xe(fArr2D x_/*[B][D]*/,
+                                const fArr2D p_/*[B][D]*/,
+                                const fArr2D yt_/*[B][D]*/,
+                                int B, int D)
+{
+    typedef float (*ArrBD)[D];
     ArrBD x = (ArrBD) x_;
-    const ArrBD z = (const ArrBD) z_;
-    const ArrBD yt = (ArrBD) yt_;
+    const ArrBD p = (const ArrBD) p_;
+    const ArrBD yt = (const ArrBD) yt_;
 
     for (int i = 0; i < B; i++)
         for (int j = 0; j < D; j++)
-            x[i][j] *= z[i][j] * (yt[i][j] - z[i][j]);
+            x[i][j] *= (p[i][j] - yt[i][j]);
 }
 
 /* Calculates the derivative of the hyperbolic tangent (tanh) function
