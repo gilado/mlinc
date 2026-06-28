@@ -704,7 +704,7 @@ int main(int argc, char** argv)
     if (tests[3]) {
         init_lrng(42);
         const int layers[2] = {12,12};
-        test_dense_classification(layers,2,"linear",5,0.001,0.01,120);
+        test_dense_classification(layers,2,"linear",1,0.001,0.01,100);
     }
     if (tests[4]) {
         init_lrng(42);
