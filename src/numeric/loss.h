@@ -20,7 +20,7 @@ static inline float cross_entropy_loss(const fArr2D yp_,
     float loss = 0.0;
     for (int i = 0; i < T; i++)
         for (int j = 0; j < K; j++)
-            loss += -yt[i][j] * log(yp[i][j] + 1e-8);
+            loss += -yt[i][j] * log(fmax(yp[i][j],1e-16));
     return loss;
 }
 
@@ -40,7 +40,7 @@ static inline float sparse_cross_entropy_loss(const fArr2D yp_,
     const ArrT1 yt = (const ArrT1) yt_;
     float loss = 0.0;
     for (int i = 0; i < T; i++)
-        loss += -log(yp[i][(int) yt[i][0]] + 1e-8);
+        loss += -log(fmax(yp[i][(int) yt[i][0]],1e-16));
     return loss;
 }
 
@@ -48,7 +48,7 @@ static inline float sparse_cross_entropy_loss(const fArr2D yp_,
  * and correspoding true vectors.
  * y_batch[M][N] - array of M predicted vectors, each having N elements
  * y_true[M][N]  - array of M true vectors, each having N elements
- * Returns the sum of mean-square error of all M vector pairs
+ * Returns the mean-square error of all M vector pairs
  */
 static inline float mean_square_error(const fArr2D y_batch_,
                                       const fArr2D y_true_, 
@@ -62,11 +62,21 @@ static inline float mean_square_error(const fArr2D y_batch_,
     for (int i = 0; i < M; i++)
         for (int j = 0; j < N; j++)
             error += pow(y_batch[i][j] - y_true[i][j],2);
-    return sqrt(error);
+    return error / M / N;
 }
 
-/* Calculates the gradient of the cross-entropy loss with respect to 
- * prediction (dL/dy) for predicted vectors and their true vectors.
+/* Calculates the gradient of the combined softmax and cross-entropy loss
+ * with respect to the input scores (dL/dy), for a batch of predictions
+ * and their true labels.
+ *
+ * This function assumes yp is the output of a softmax activation.
+ * The gradient simplifies to (yp - yt) / T, which is NOT the gradient
+ * of cross-entropy alone (-yt / yp), but the combined gradient of
+ * softmax + cross-entropy.
+ *
+ * Reference:
+ *   Dahal, Paras. (Jun 2017). Softmax and Cross Entropy Loss. 
+ *   https://parasdahal.com/softmax-crossentropy.
  *
  * yp - predicted vector
  * yt - corresponding true vector
@@ -86,14 +96,20 @@ static inline void dLdy_cross_entropy_loss(const fArr2D yp_/*[T][K]*/,
 
     for (int i = 0; i < T; i++)
         for (int j = 0; j < K; j++)
-            dy[i][j] = (yp[i][j] - yt[i][j]) / K;
+            dy[i][j] = (yp[i][j] - yt[i][j]) / T;
 }
 
-/* Calculates the gradient of the cross-entropy loss with respect to 
- * prediction (dL/dy) for predicted vectors and their true vectors.
+/* Calculates the gradient of the combined softmax and cross-entropy loss
+ * with respect to the input scores (dL/dy), for a batch of predictions
+ * and their true labels.
+ *
+ * This function assumes yp is the output of a softmax activation.
+ * The gradient simplifies to (yp - yt) / T, which is NOT the gradient
+ * of cross-entropy alone (-yt / yp), but the combined gradient of
+ * softmax + cross-entropy.
  *
  * yp - predicted vector
- * yt - corresponding true vector
+ * yt - corresponding class indexes of the true vector
  * dy - gradient of the loss
  * T  - batch size
  * K  - vectors dimension
@@ -111,11 +127,11 @@ static inline void dLdy_sparse_cross_entropy_loss(const fArr2D yp_/*[T][K]*/,
 
     for (int i = 0; i < T; i++)
         for (int j = 0; j < K; j++)
-            dy[i][j] = (yp[i][j] - ((j == (int) yt[i][0]) ? 1 : 0)) / K;
+            dy[i][j] = (yp[i][j] - ((j == (int) yt[i][0]) ? 1 : 0)) / T;
 }
 
 /* Calculates the gradient of the mean square error loss with respect to 
- * prediction (dL/dy) for one predicted vector and one true vector.
+ * prediction (dL/dy) for a batch of predicted vector and one true vector.
  *
  * yp - predicted vector
  * yt - corresponding true vector

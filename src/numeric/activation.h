@@ -75,7 +75,7 @@ static inline void gelu(fArr2D m_/*[B][S]*/, int B, int S)
  *   B  : Number of rows in the matrix
  *   K  : Number of columns in the matrix
  *
- * Motes:
+ * Notes:
  * Converts predictions in vectors that are the rows of the passed in array
  * to probabilities.
  *
@@ -252,39 +252,6 @@ static inline void d_softmax(fArr2D g_/*[B][D]*/,
         for (int j = 0; j < D; j++)
             g[i][j] = p[i][j] * (dp[i][j] - dot);
     }
-}
-
-/* Computes the gradient of the combined softmax and cross-entropy loss
- * with respect to the input scores, and scales the input array x by it.
- *
- * For softmax followed by cross-entropy loss, the gradient simplifies to:
- *   dL/dz = p - y
- * where p is the softmax output and y is the one-hot target.
- *
- * Parameters:
- *   x  : Pointer to the 2D array to be scaled by the gradient
- *   p  : Pointer to the 2D array of softmax output probabilities
- *   yt : Pointer to the 2D array of one-hot encoded target values
- *   B  : Number of rows in the matrices (batch size)
- *   D  : Number of columns in the matrices (number of classes)
- *
- * Reference:
- *   Dahal, Paras. (Jun 2017). Softmax and Cross Entropy Loss. 
- *   https://parasdahal.com/softmax-crossentropy.
- */
-static inline void d_softmax_xe(fArr2D x_/*[B][D]*/,
-                                const fArr2D p_/*[B][D]*/,
-                                const fArr2D yt_/*[B][D]*/,
-                                int B, int D)
-{
-    typedef float (*ArrBD)[D];
-    ArrBD x = (ArrBD) x_;
-    const ArrBD p = (const ArrBD) p_;
-    const ArrBD yt = (const ArrBD) yt_;
-
-    for (int i = 0; i < B; i++)
-        for (int j = 0; j < D; j++)
-            x[i][j] *= (p[i][j] - yt[i][j]);
 }
 
 /* Calculates the derivative of the hyperbolic tangent (tanh) function
