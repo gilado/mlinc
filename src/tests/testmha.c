@@ -8,6 +8,7 @@
 #include "mha.h"
 
 #define EPS 1e-3f
+#define TOL 1e-4f
 
 void test_mha_zero_forward(MHA* m)
 {
@@ -40,6 +41,80 @@ void test_mha_zero_forward(MHA* m)
     printf("  OK\n");
 }
 
+void test_mha_attention_active(MHA* m)
+{
+    printf("Test: MHA attention is active\n");
+
+    int B = m->B;
+    int T = m->T;
+    int D = m->D;
+    int BT = m->BT;
+
+    float X[BT][D];
+    float Y[BT][D];
+
+    typedef float (*ArrDD)[D];
+    ArrDD Wq = (ArrDD) m->Wq;
+    ArrDD Wk = (ArrDD) m->Wk;
+    ArrDD Wv = (ArrDD) m->Wv;
+    ArrDD Wo = (ArrDD) m->Wo;
+
+    /* Set Wq, Wk, Wv, Wo to identity */
+    fltclr(m->Wq, D * D);
+    fltclr(m->Wk, D * D);
+    fltclr(m->Wv, D * D);
+    fltclr(m->Wo, D * D);
+    for (int i = 0; i < D; i++) {
+        Wq[i][i] = 1.0f;
+        Wk[i][i] = 1.0f;
+        Wv[i][i] = 1.0f;
+        Wo[i][i] = 1.0f;
+    }
+
+    /* Fill X with small random values, then set token 0 of each batch
+     * to a large distinctive value so it dominates dot-product scores */
+    for (int b = 0; b < B; b++) {
+        for (int t = 0; t < T; t++) {
+            for (int j = 0; j < D; j++)
+                X[b * T + t][j] = urand(-0.01f, 0.01f);
+        }
+        /* Token 0: large uniform value so it attends strongly to itself */
+        for (int j = 0; j < D; j++)
+            X[b * T + 0][j] = 3.0f;
+    }
+
+    fltclr(Y, BT * D);
+    mha_forward(m, X, NULL, Y, 0, 0);
+
+    /* With identity weights and token 0 dominant, token 0's output
+     * should be close to its own input value (self-attention dominates)
+     */
+    for (int b = 0; b < B; b++) {
+        int r = b * T; /* token 0 of batch b */
+        for (int j = 0; j < D; j++) {
+            float diff = fabsf(Y[r][j] - X[r][j]);
+            if (diff > TOL) {
+                printf("FAIL: Y[%d][%d]=%g should be close to X[%d][%d]=%g\n",
+                       r, j, Y[r][j], r, j, X[r][j]);
+                exit(1);
+            }
+        }
+    }
+
+    /* Also verify output is NOT zero (attention is actually doing something) */
+    float norm = 0.0f;
+    for (int i = 0; i < BT; i++)
+        for (int j = 0; j < D; j++)
+            norm += Y[i][j] * Y[i][j];
+
+    if (norm < 1e-6f) {
+        printf("FAIL: output is effectively zero, attention not active\n");
+        exit(1);
+    }
+
+    printf("  OK\n");
+}
+
 float mha_loss(MHA* m, fArr2D X)
 {
     int BT = m->BT;
@@ -47,7 +122,7 @@ float mha_loss(MHA* m, fArr2D X)
 
     float Y[BT][D];
     fltclr(Y, BT * D);
-    
+
     mha_forward(m, X, NULL, Y, 0, 0);
 
     float L = 0;
@@ -66,11 +141,22 @@ void test_mha_finite_diff(MHA* m)
     int D  = m->D;
 
     float X[BT][D];
+    float Y[BT][D];
     float dX[BT][D];
     float dY[BT][D];
 
     typedef float (*ArrDD)[D];
 
+    ArrDD Wq = (ArrDD) m->Wq;
+    ArrDD Wk = (ArrDD) m->Wk;
+    ArrDD Wv = (ArrDD) m->Wv;
+    ArrDD Wo = (ArrDD) m->Wo;
+    ArrDD gWq = (ArrDD) m->gWq;
+    ArrDD gWk = (ArrDD) m->gWk;
+    ArrDD gWv = (ArrDD) m->gWv;
+    ArrDD gWo = (ArrDD) m->gWo;
+
+    fltclr(Y, BT * D);
     for (int i = 0; i < BT; i++) {
         for (int j = 0; j < D; j++) {
             X[i][j]  = urand(-0.1, 0.1);
@@ -79,27 +165,12 @@ void test_mha_finite_diff(MHA* m)
         }
     }
 
-    ArrDD Wq = (ArrDD) m->Wq;
-    ArrDD Wk = (ArrDD) m->Wk;    
-    ArrDD Wv = (ArrDD) m->Wv;
-    ArrDD Wo = (ArrDD) m->Wo;    
-    ArrDD gWq = (ArrDD) m->gWq;
-
-    for (int i = 0; i < D; i++) {
-        for (int j = 0; j < D; j++) {
-            Wq[i][j] = urand(-0.1, 0.1);
-            Wk[i][j] = urand(-0.1, 0.1);
-            Wv[i][j] = urand(-0.1, 0.1);
-            Wo[i][j] = urand(-0.1, 0.1);
-        }
-    }
-
-    mha_forward(m, X, NULL, NULL, 0, 0);
+    mha_forward(m, X, NULL, Y, 0, 0);
     mha_backward(m, dY, X, dX, 0);
 
+    /* Check dX */
     for (int i = 0; i < BT; i++) {
         for (int j = 0; j < D; j++) {
-
             float old = X[i][j];
             X[i][j] = old + EPS;
             float Lp = mha_loss(m, X);
@@ -110,16 +181,16 @@ void test_mha_finite_diff(MHA* m)
             float num = (Lp - Ln) / (2 * EPS);
             float ana = dX[i][j];
 
-            if (fabsf(num - ana) > EPS) {
-                printf("FAIL dX[%d][%d]: num=%g ana=%g\n", i, j, num, ana);
+            if (fabsf(num - ana) > TOL) {
+                printf("FAIL dX[%d][%d]: expected=%g calculated=%g\n", i, j, num, ana);
                 exit(1);
             }
         }
     }
 
+    /* Check gWq */
     for (int i = 0; i < D; i++) {
         for (int j = 0; j < D; j++) {
-
             float old = Wq[i][j];
             Wq[i][j] = old + EPS;
             float Lp = mha_loss(m, X);
@@ -130,8 +201,68 @@ void test_mha_finite_diff(MHA* m)
             float num = (Lp - Ln) / (2 * EPS);
             float ana = gWq[i][j];
 
-            if (fabsf(num - ana) > EPS) {
-                printf("FAIL gWq[%d][%d]: num=%g ana=%g\n", i, j, num, ana);
+            if (fabsf(num - ana) > TOL) {
+                printf("FAIL gWq[%d][%d]: expected=%g calculated=%g\n", i, j, num, ana);
+                exit(1);
+            }
+        }
+    }
+
+    /* Check gWk */
+    for (int i = 0; i < D; i++) {
+        for (int j = 0; j < D; j++) {
+            float old = Wk[i][j];
+            Wk[i][j] = old + EPS;
+            float Lp = mha_loss(m, X);
+            Wk[i][j] = old - EPS;
+            float Ln = mha_loss(m, X);
+            Wk[i][j] = old;
+
+            float num = (Lp - Ln) / (2 * EPS);
+            float ana = gWk[i][j];
+
+            if (fabsf(num - ana) > TOL) {
+                printf("FAIL gWk[%d][%d]: expected=%g calculated=%g\n", i, j, num, ana);
+                exit(1);
+            }
+        }
+    }
+
+    /* Check gWv */
+    for (int i = 0; i < D; i++) {
+        for (int j = 0; j < D; j++) {
+            float old = Wv[i][j];
+            Wv[i][j] = old + EPS;
+            float Lp = mha_loss(m, X);
+            Wv[i][j] = old - EPS;
+            float Ln = mha_loss(m, X);
+            Wv[i][j] = old;
+
+            float num = (Lp - Ln) / (2 * EPS);
+            float ana = gWv[i][j];
+
+            if (fabsf(num - ana) > TOL) {
+                printf("FAIL gWv[%d][%d]: expected=%g calculated=%g\n", i, j, num, ana);
+                exit(1);
+            }
+        }
+    }
+
+    /* Check gWo */
+    for (int i = 0; i < D; i++) {
+        for (int j = 0; j < D; j++) {
+            float old = Wo[i][j];
+            Wo[i][j] = old + EPS;
+            float Lp = mha_loss(m, X);
+            Wo[i][j] = old - EPS;
+            float Ln = mha_loss(m, X);
+            Wo[i][j] = old;
+
+            float num = (Lp - Ln) / (2 * EPS);
+            float ana = gWo[i][j];
+
+            if (fabsf(num - ana) > TOL) {
+                printf("FAIL gWo[%d][%d]: expected=%g calculated=%g\n", i, j, num, ana);
                 exit(1);
             }
         }
@@ -139,7 +270,6 @@ void test_mha_finite_diff(MHA* m)
 
     printf("  OK\n");
 }
-
 float softmax_loss(fArr2D Scores, fArr2D dAtt_, int T)
 {
     float Att[T][T];
@@ -157,9 +287,9 @@ float softmax_loss(fArr2D Scores, fArr2D dAtt_, int T)
     return L;
 }
 
-void test_softmax_backward(void)
+void test_d_softmax(void)
 {
-    printf("Test: softmax_backward isolated\n");
+    printf("Test: d_softmax\n");
 
     const int T = 4;
     float Scores[T][T];
@@ -178,7 +308,7 @@ void test_softmax_backward(void)
     softmax((fArr2D)Att, T, T);
 
     memcpy(dScores, dAtt, sizeof(dAtt));
-    softmax_backward(dScores, dAtt, Att, T, T);
+    d_softmax(dScores, dAtt, Att, T, T);
 
     for (int i = 0; i < T; i++) {
         for (int j = 0; j < T; j++) {
@@ -193,8 +323,8 @@ void test_softmax_backward(void)
             float num = (Lp - Ln) / (2 * EPS);
             float ana = dScores[i][j];
 
-            if (fabsf(num - ana) > EPS) {
-                printf("FAIL softmax dScores[%d][%d]: num=%g ana=%g\n",
+            if (fabsf(num - ana) > TOL) {
+                printf("FAIL softmax dScores[%d][%d]: expected=%g calculated=%g\n",
                        i, j, num, ana);
                 exit(1);
             }
@@ -207,7 +337,6 @@ void test_softmax_backward(void)
 void test_mask(MHA* m) {
     printf("Test: MHA mask\n");
 
-    int B = m->B;
     int T = m->T;
     int D = m->D;
     int BT = m->BT;
@@ -220,7 +349,7 @@ void test_mask(MHA* m) {
 
     for (int i = 0; i < BT; i++)
         for (int j = 0; j < D; j++)
-            X[i][j] = urand(-0.1, 0.1);
+            X[i][j] = urand(-0.1,0.1);
 
     fltclr(m->Wq, D * D);
     fltclr(m->Wk, D * D);
@@ -238,17 +367,24 @@ void test_mask(MHA* m) {
 
     ArrTT Scores = (ArrTT) m->Scores;
 
-    for (int b = 0; b < B; b++) {
-        for (int i = 0; i < T; i++) {
-            for (int j = i + 1; j < T; j++) {
-                if (fabsf(Scores[i][j]) > 1e-9) {
-                    printf("FAIL mask: Scores[%d][%d] = %g not masked\n", i, j, Scores[i][j]);
-                    exit(1);
-                }
-            }
+    float masked_sum = 0;
+    float unmasked_sum = 0;
+
+    for (int i = 0; i < T; i++) {
+        for (int j = 0; j < T; j++) {
+            if (j > i)
+                masked_sum += fabsf(Scores[i][j]);
+            else
+                unmasked_sum += fabsf(Scores[i][j]);
         }
     }
 
+    if (masked_sum != 0)
+        printf("FAIL mask: masked positions sum = %g, expected 0\n", masked_sum);
+    if (unmasked_sum == 0)
+        printf("FAIL mask: unmasked positions sum = 0, attention not active\n");
+    if (masked_sum != 0 || unmasked_sum == 0)
+        exit(1);
     printf("  OK\n");
 }
 
@@ -280,33 +416,61 @@ void test_padding_mask(MHA* m) {
     typedef float (*ArrTT)[T];
     ArrTT Scores = (ArrTT)m->Scores;
 
-    // Check Scores corresponding to padded tokens are close to zero
-    for (int t = T - 2; t < T; t++) {
+    float padded_sum = 0;
+    float unpadded_sum = 0;
+
+    for (int i = 0; i < T; i++) {
         for (int j = 0; j < T; j++) {
-            if (Scores[j][t] > 1e-8) {
-                printf("FAIL pad mask col: Scores[%d][%d] = %g not masked\n", j, t, Scores[j][t]);
-                exit(1);
-            }
+            if (j >= T - 2)  /* last two tokens are padded */
+                padded_sum += fabsf(Scores[i][j]);
+            else
+                unpadded_sum += fabsf(Scores[i][j]);
         }
     }
 
+    if (padded_sum != 0)
+        printf("FAIL pad mask: padded positions sum = %g, expected 0\n", padded_sum);
+    if (unpadded_sum == 0)
+        printf("FAIL pad mask: unpadded positions sum = 0, attention not active\n");
+    if (padded_sum != 0 || unpadded_sum == 0)
+        exit(1);
     printf("  OK\n");
 }
 
 int main(void)
 {
     init_lrng(42);
+    MHA* m;
+    const int batch_size = 2;
+    const int seq_len = 4;
+    const int input_dim = 8;
+    const int num_heads = 2;
 
-    MHA* m = mha_create(2, 4);  // batch=2, seq_len=4
-    mha_init(m, 8, 2, 1);       // D=8, H=2
+    test_d_softmax();
 
-    test_softmax_backward();
+    m = mha_create(num_heads,seq_len);
+    mha_init(m,input_dim,batch_size,1,0);
     test_mha_zero_forward(m);
+    mha_free(m);
+
+    m = mha_create(num_heads,seq_len);
+    mha_init(m,input_dim,batch_size,1,0);
+    test_mha_attention_active(m);
+    mha_free(m);
+
+    m = mha_create(num_heads,seq_len);
+    mha_init(m,input_dim,batch_size,1,0);
     test_mha_finite_diff(m);
+    mha_free(m);
 
+    m = mha_create(num_heads,seq_len);
+    mha_init(m,input_dim,batch_size,1,0);
     test_mask(m);
-    test_padding_mask(m);
+    mha_free(m);
 
+    m = mha_create(num_heads,seq_len);
+    mha_init(m,input_dim,batch_size,1,0);
+    test_padding_mask(m);
     mha_free(m);
 
     printf("\nALL TESTS PASSED\n");
