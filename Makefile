@@ -47,7 +47,7 @@ TESTS = testmem testarray testrandom testhash testannoy \
 		testqr testsvd testpca \
 		testadamw testctc \
 		testdense testlstm testmodel \
-		testembed testmha
+		testembed testmha testxfmr
 
 SRCS = $(shell find $(SRC_DIR) -name '*.c')
 HDRS = $(shell find $(SRC_DIR) -name '*.h')

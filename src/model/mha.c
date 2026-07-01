@@ -1,9 +1,8 @@
 /* Copyright (c) 2026 Gilad Odinak */
 /* Multi-Head Attention layer functions */
 #include <stdio.h>
-#include <stdlib.h>
-#include <strings.h>
 #include "mem.h"
+#include "random.h"
 #include "mha.h"
 
 MHA* mha_create(int heads, int steps)
@@ -14,7 +13,7 @@ MHA* mha_create(int heads, int steps)
     return l;
 }
 
-void mha_init(MHA* l, int input_dim, int batch_size, int training)
+void mha_init(MHA* l, int input_dim, int batch_size, int training, float dropout_rate)
 {
     if (input_dim % l->H != 0) {
         fflush(stdout);
@@ -26,6 +25,10 @@ void mha_init(MHA* l, int input_dim, int batch_size, int training)
     l->Dh = input_dim / l->H;   
     l->B = batch_size;
     l->BT = l->B * l->T;
+    l->BHT = l->B * l->H * l->T;
+
+    l->training = training;
+    l->dropout_rate  = dropout_rate;
     
     l->Wq = allocmem(l->D,l->D,float);
     l->Wk = allocmem(l->D,l->D,float);
@@ -36,15 +39,28 @@ void mha_init(MHA* l, int input_dim, int batch_size, int training)
     l->K = allocmem(l->BT,l->D,float);
     l->V = allocmem(l->BT,l->D,float);
 
-    l->Qh = allocmem(l->T,l->Dh,float);
-    l->Kh = allocmem(l->T,l->Dh,float);
-    l->Vh = allocmem(l->T,l->Dh,float);
+    l->Qh = allocmem(l->BHT,l->Dh,float);
+    l->Kh = allocmem(l->BHT,l->Dh,float);
+    l->Vh = allocmem(l->BHT,l->Dh,float);
 
     l->Scores = allocmem(l->T,l->T,float);
-    l->Att = allocmem(l->T,l->T,float);
+    l->Att = allocmem(l->BHT,l->T,float);
+    l->AttMask = allocmem(l->BHT,l->T,float);
     l->Oh = allocmem(l->T,l->Dh,float);
     
     l->Out = allocmem(l->BT,l->D,float);
+
+    float* w;
+    int D2 = l->D * l->D;
+    float sd = sqrtf(1.0 / l->D);
+    w = (float*) l->Wq;
+    for (int i = 0; i < D2; i++) w[i] = nrand(0,sd);
+    w = (float*) l->Wk;
+    for (int i = 0; i < D2; i++) w[i] = nrand(0,sd);
+    w = (float*) l->Wv;
+    for (int i = 0; i < D2; i++) w[i] = nrand(0,sd);
+    w = (float*) l->Wo;
+    for (int i = 0; i < D2; i++) w[i] = nrand(0,sd);
 
     if (!training)
         return;
@@ -86,6 +102,7 @@ void mha_free(MHA* l)
 
     freemem(l->Scores);
     freemem(l->Att);
+    freemem(l->AttMask);
     freemem(l->Oh);
     
     freemem(l->Out);

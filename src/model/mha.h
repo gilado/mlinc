@@ -6,6 +6,7 @@
 #include "float.h"
 #include "array.h"
 #include "activation.h"
+#include "dropout.h"
 
 typedef struct {
     /* dimensions */
@@ -15,6 +16,10 @@ typedef struct {
     int H;      /* heads */
     int Dh;     /* D / H */
     int BT;     /* B * T */
+    int BHT;    /* B * H * T */
+
+    int   training;      /* 1 if training, 0 if inference */
+    float dropout_rate;  /* fraction of attention weights to zero out */
 
     fArr2D Wq;  /* [D][D] */
     fArr2D Wk;  /* [D][D] */
@@ -25,13 +30,18 @@ typedef struct {
     fArr2D K;   /* [BT][D] */
     fArr2D V;   /* [BT][D] */
 
-    fArr2D Qh;      /* [T][Dh] */
-    fArr2D Kh;      /* [T][Dh] */
-    fArr2D Vh;      /* [T][Dh] */
+    /* Per-(b,h,t) split heads and attention weights, stored for the
+     * entire batch so backward can read back exactly what forward
+     * computed for each (b,h) pair, rather than recomputing it. 
+     */
+    fArr2D Qh;      /* [BHT][Dh] row (b*H+h)*T+t */
+    fArr2D Kh;      /* [BHT][Dh] row (b*H+h)*T+t */
+    fArr2D Vh;      /* [BHT][Dh] row (b*H+h)*T+t */
 
-    fArr2D Scores;  /* [T][T] */
-    fArr2D Att;     /* [T][T] */
-    fArr2D Oh;      /* [T][Dh] */
+    fArr2D Scores;  /* [T][T]   scratch, not persisted */
+    fArr2D Att;     /* [BHT][T] row (b*H+h)*T+t */
+    fArr2D AttMask; /* [BHT][T] row (b*H+h)*T+t */
+    fArr2D Oh;      /* [T][Dh]  scratch, not persisted */
 
     fArr2D Out;     /* [BT][D] */
 
@@ -47,8 +57,8 @@ typedef struct {
     fArr2D dVh;     /* [T][Dh] */
 
     fArr2D dOh;     /* [T][Dh] */
-    fArr2D dAtt;    /* [T][T] */
-    fArr2D dScores; /* [T][T] */
+    fArr2D dAtt;    /* [T][T]  */
+    fArr2D dScores; /* [T][T]  */
 
     /* parameter gradients */
     fArr2D gWq;     /* [D][D] */
@@ -60,12 +70,11 @@ typedef struct {
 
 MHA* mha_create(int heads, int steps);
 
-void mha_init(MHA* l, int input_dim, int batch_size, int training);
+void mha_init(MHA* l, int input_dim, int batch_size, int training, float dropout_rate);
 
 void mha_free(MHA* l);
 
-/*
- * mha_forward - forward pass of Multi-Head Attention (MHA) layer
+/* mha_forward - forward pass of Multi-Head Attention (MHA) layer
  *
  * This function computes the multi-head attention output for a batch
  * of sequences, including optional causal masking and padding masks.
@@ -87,23 +96,34 @@ void mha_free(MHA* l);
  *               sequence (used in decoder).
  *   lyr       : Layer index.
  *
- * Behavior:
- *   1. Projects input X into query (Q), key (K), and value (V) matrices
- *      using learned weights.
- *   2. Splits Q, K, V into H attention heads of dimension Dh = D/H.
- *   3. Computes scaled dot-product attention for each head:
- *      - Qh @ Kh^T / sqrt(Dh)
- *      - Applies causal mask if mask != 0
- *      - Applies column-wise padding mask if pad_mask is provided
- *      - Applies row-wise softmax to get attention weights
- *      - Multiplies attention weights with Vh
- *   4. Concatenates head outputs and applies the output projection
- *      Wo if Y != NULL.
+ * Computation (per head h, per batch item b):
+ *
+ *   Step 1 - Linear projections (Eq. 3, Sec. 3.2.2):
+ *     Q = X @ Wq,  K = X @ Wk,  V = X @ Wv
+ *
+ *   Step 2 - Split into heads (Sec. 3.2.2):
+ *     Qh = Q[b*T:(b+1)*T, h*Dh:(h+1)*Dh]
+ *     Kh = K[b*T:(b+1)*T, h*Dh:(h+1)*Dh]
+ *     Vh = V[b*T:(b+1)*T, h*Dh:(h+1)*Dh]
+ *
+ *   Step 3 - Scaled dot-product attention (Eq. 1, Sec. 3.2.1):
+ *     Scores = Qh @ Kh.T / sqrt(Dh)
+ *     Scores[i][j] = -1e9 for j > i  (causal mask, Sec. 3.2.3)
+ *     Att = softmax(Scores)           (row-wise)
+ *     Oh  = Att @ Vh
+ *
+ *   Step 4 - Concatenate heads and project (Eq. 2, Sec. 3.2.2):
+ *     Out = Concat(Oh_0, ..., Oh_{H-1})
+ *     Y   = Out @ Wo if Y != NULL
  *
  * Note: Padding is not allowed at the beginning of a sequence; only
  *       trailing (right-aligned) padding is supported.
  *
- * References:
+ * Note: Qh, Kh, Vh, and Att are stored per (b,h) pair for the whole
+ *       batch, so that mha_backward can read back exactly what forward
+ *       computed for each (b,h) without recomputing it.
+ *
+ * Reference:
  *   - Vaswani et al., "Attention Is All You Need", 2017
  */
 static inline void mha_forward(MHA* restrict l,
@@ -123,58 +143,72 @@ static inline void mha_forward(MHA* restrict l,
 
     typedef float (*ArrDD)[D];
     typedef float (*ArrBTD)[D];
+    typedef float (*ArrBHTDh)[Dh];
     typedef float (*ArrTDh)[Dh];
     typedef float (*ArrTT)[T];
+    typedef float (*ArrBHTT)[T];
 
-    const ArrDD Wq = (ArrDD) l->Wq;
-    const ArrDD Wk = (ArrDD) l->Wk;
-    const ArrDD Wv = (ArrDD) l->Wv;
-    const ArrDD Wo = (ArrDD) l->Wo;
+    ArrDD Wq = (ArrDD) l->Wq;
+    ArrDD Wk = (ArrDD) l->Wk;
+    ArrDD Wv = (ArrDD) l->Wv;
+    ArrDD Wo = (ArrDD) l->Wo;
 
-    const ArrBTD Q = (ArrBTD) l->Q;
-    const ArrBTD K = (ArrBTD) l->K;
-    const ArrBTD V = (ArrBTD) l->V;
+    ArrBTD Q = (ArrBTD) l->Q;
+    ArrBTD K = (ArrBTD) l->K;
+    ArrBTD V = (ArrBTD) l->V;
 
-    const ArrTDh Qh = (ArrTDh) l->Qh;
-    const ArrTDh Kh = (ArrTDh) l->Kh;
-    const ArrTDh Vh = (ArrTDh) l->Vh;
+    ArrBHTDh Qh = (ArrBHTDh) l->Qh;
+    ArrBHTDh Kh = (ArrBHTDh) l->Kh;
+    ArrBHTDh Vh = (ArrBHTDh) l->Vh;
 
-    const ArrTT Scores = (ArrTT) l->Scores;
-    const ArrTT Att = (ArrTT) l->Att;
-    const ArrTDh Oh = (ArrTDh) l->Oh;
+    ArrTT Scores = (ArrTT) l->Scores;
+    ArrBHTT Att = (ArrBHTT) l->Att;
+    ArrBHTT AttMask = (ArrBHTT) l->AttMask;
+    ArrTDh Oh = (ArrTDh) l->Oh;
 
-    const ArrBTD Out = (ArrBTD) l->Out;
+    ArrBTD Out = (ArrBTD) l->Out;
 
-    /* Linear projection of all heads - page 4. sec. 3.2.2 */
-    matmul(Q, X, Wq, BT, D, D);
-    matmul(K, X, Wk, BT, D, D);
-    matmul(V, X, Wv, BT, D, D);
-
-    fltclr(Out, BT * D);
+    /* Step 1 - Linear projections (Eq. 3, Sec. 3.2.2):
+     * Q = X @ Wq,  K = X @ Wk,  V = X @ Wv
+     */
+    matmul(Q,X,Wq,BT,D,D);
+    matmul(K,X,Wk,BT,D,D);
+    matmul(V,X,Wv,BT,D,D);
+    fltclr(Out,BT * D);
 
     for (int b = 0; b < B; b++) {
         for (int h = 0; h < H; h++) {
 
-            /* Split heads - page 5. sec. 3.2.2: definition of head */
+            int base = (b * H + h) * T; /* row offset into [BHT][...] buffers */
+
+            /* Step 2 - Split into heads (Sec. 3.2.2):
+             * Qh = Q[b*T:(b+1)*T, h*Dh:(h+1)*Dh]
+             * Kh = K[b*T:(b+1)*T, h*Dh:(h+1)*Dh]
+             * Vh = V[b*T:(b+1)*T, h*Dh:(h+1)*Dh]
+             */
             for (int t = 0; t < T; t++) {
                 int r = b * T + t;
-                fltcpy(&Qh[t][0], &Q[r][h*Dh], Dh);
-                fltcpy(&Kh[t][0], &K[r][h*Dh], Dh);
-                fltcpy(&Vh[t][0], &V[r][h*Dh], Dh);
+                fltcpy(&Qh[base+t][0],&Q[r][h*Dh],Dh);
+                fltcpy(&Kh[base+t][0],&K[r][h*Dh],Dh);
+                fltcpy(&Vh[base+t][0],&V[r][h*Dh],Dh);
             }
 
-            /* Compute attention scores - Eq. (1), page 4: Q @ K.T */
-            matmulT(Scores, Qh, Kh, T, Dh, T);
+            /* Step 3 - Scaled dot-product attention (Eq. 1, Sec. 3.2.1):
+             * Scores = Qh @ Kh.T / sqrt(Dh)
+             * Scores[i][j] = -1e9 for j > i  (causal mask, Sec. 3.2.3)
+             * Att = softmax(Scores)
+             * Oh  = Att @ Vh
+             */
+            matmulT(Scores,&Qh[base],&Kh[base],T,Dh,T);
 
-            /* Scale by sqrt(dk) (numerical stability) - Eq. (1) */
             float s = 1.0f / sqrtf((float)Dh);
             for(int i = 0; i < T; i++)
                 for(int j = 0; j < T; j++)
                     Scores[i][j] *= s;
 
             if (mask) {
-                /* Prevent attending to future positions - Fig. 2, page 4 */
-                /* Also section 3.2.3, page 5 */
+                /* Prevent attending to future positions - Fig. 2 */
+                /* Also section 3.2.3 */
                 for (int i = 0; i < T; i++)
                     for (int j = i + 1; j < T; j++)
                         Scores[i][j] = -1e9f;
@@ -187,28 +221,70 @@ static inline void mha_forward(MHA* restrict l,
                             Scores[j][i] = -1e9f;
             }
 
-            /* Compute attention probabilities - Softmax - Eq. (1) */
+            /* Compute attention probabilities - Softmax - Eq. 1 */
             softmax(Scores, T, T);
 
-            /* Att and Scores could be same buffer, but this is clearer */
-            fltcpy(Att, Scores, T * T);
+            /* Store this head's attention weights for backward */
+            fltcpy(&Att[base], Scores, T * T);
 
-            /* Eq. (1): Attention @ V */
-            matmul(Oh, Att, Vh, T, T, Dh);
+            if (l->training && l->dropout_rate > 0)
+                dropout(&Att[base],&AttMask[base],T,T,l->dropout_rate);
 
-            /* Concatenate heads - page 5. sec. 3.2.2: definition of MultiHead() */
+            /* Eq. 1: Attention @ V */
+            matmul(Oh,&Att[base],&Vh[base],T,T,Dh);
+
+            /* Step 4 - Concatenate heads and project (Eq. 2, Sec. 3.2.2):
+             * Out = Concat(Oh_0, ..., Oh_{H-1})
+             */
             for (int t = 0;t < T; t++) {
                 int r= b * T + t;
                 fltcpy(&Out[r][h * Dh], &Oh[t][0], Dh);
             }
         }
     }
-
-    /* output projection - Eq. (2) */
+    /* Step 4 continued - output projection (Eq. 2, Sec. 3.2.2):
+     * Y = Out @ Wo
+     */
     if (Y != NULL)
-      matmul(Y, Out, Wo, BT, D, D);
+        matmul(Y,Out,Wo,BT,D,D);
 }
 
+/*
+ * mha_backward - backward pass of Multi-Head Attention (MHA) layer.
+ *
+ * Computes gradients of the loss with respect to weights and inputs,
+ * reversing each step of mha_forward in order.
+ *
+ * Reads back the per-(b,h) Qh, Kh, Vh, and Att stored by mha_forward
+ * for the same (b,h) pair, rather than recomputing them, so the values
+ * used here are guaranteed identical to what forward actually produced.
+ *
+ * Gradient steps (reverse of forward):
+ *
+ *   Step 4 backward - output projection (reverse of Y = Out @ Wo):
+ *     gWo  = Out.T @ dY
+ *     dOut = dY @ Wo.T
+ *
+ *   Step 3 backward - scaled dot-product attention, per (b,h):
+ *     (a) reverse Oh = Att @ Vh:
+ *           dVh  = Att.T @ dOh
+ *           dAtt = dOh @ Vh.T
+ *     (b) reverse Att = softmax(Scores):
+ *           dScores = J_softmax(Att).T @ dAtt   (Jacobian, Sec. 3.2.1)
+ *           dScores /= sqrt(Dh)                  (reverse scaling)
+ *     (c) reverse Scores = Qh @ Kh.T:
+ *           dQh = dScores @ Kh
+ *           dKh = dScores.T @ Qh
+ *
+ *   Step 2 backward - accumulate head gradients into full tensors:
+ *     dQ[b*T+t][h*Dh+k] += dQh[t][k]
+ *     dK[b*T+t][h*Dh+k] += dKh[t][k]
+ *     dV[b*T+t][h*Dh+k] += dVh[t][k]
+ *
+ *   Step 1 backward - linear projections (reverse of Q=X@Wq, K=X@Wk, V=X@Wv):
+ *     gWq = X.T @ dQ,  gWk = X.T @ dK,  gWv = X.T @ dV
+ *     dX  = dQ @ Wq.T + dK @ Wk.T + dV @ Wv.T if dX != NULL
+ */
 static inline void mha_backward(MHA* restrict l,
                                 fArr2D restrict dY /*[BT][D]*/,
                                 const fArr2D restrict X/*[BT][D]*/,
@@ -224,80 +300,108 @@ static inline void mha_backward(MHA* restrict l,
     const int BT = l->BT;
 
     typedef float (*ArrBTD)[D];
+    typedef float (*ArrBHTDh)[Dh];
     typedef float (*ArrTDh)[Dh];
     typedef float (*ArrTT)[T];
+    typedef float (*ArrBHTT)[T];
     typedef float (*ArrDD)[D];
 
-    const ArrBTD dOut = (ArrBTD) l->dOut;
+    ArrBTD dOut = (ArrBTD) l->dOut;
 
-    const ArrBTD dQ = (ArrBTD) l->dQ;
-    const ArrBTD dK = (ArrBTD) l->dK;
-    const ArrBTD dV = (ArrBTD) l->dV;
+    ArrBTD dQ = (ArrBTD) l->dQ;
+    ArrBTD dK = (ArrBTD) l->dK;
+    ArrBTD dV = (ArrBTD) l->dV;
 
-    const ArrTDh dQh = (ArrTDh) l->dQh;
-    const ArrTDh dKh = (ArrTDh) l->dKh;
-    const ArrTDh dVh = (ArrTDh) l->dVh;
+    ArrTDh dQh = (ArrTDh) l->dQh;
+    ArrTDh dKh = (ArrTDh) l->dKh;
+    ArrTDh dVh = (ArrTDh) l->dVh;
 
-    const ArrTDh dOh = (ArrTDh) l->dOh;
-    const ArrTT dAtt = (ArrTT) l->dAtt;
-    const ArrTT dScores = (ArrTT) l->dScores;
+    ArrTDh dOh = (ArrTDh) l->dOh;
+    ArrTT dAtt = (ArrTT) l->dAtt;
+    ArrTT dScores = (ArrTT) l->dScores;
 
-    const ArrDD gWq = (ArrDD) l->gWq;
-    const ArrDD gWk = (ArrDD) l->gWk;
-    const ArrDD gWv = (ArrDD) l->gWv;
-    const ArrDD gWo = (ArrDD) l->gWo;
+    ArrDD gWq = (ArrDD) l->gWq;
+    ArrDD gWk = (ArrDD) l->gWk;
+    ArrDD gWv = (ArrDD) l->gWv;
+    ArrDD gWo = (ArrDD) l->gWo;
 
-    const ArrDD Wq = (ArrDD) l->Wq;
-    const ArrDD Wk = (ArrDD) l->Wk;
-    const ArrDD Wv = (ArrDD) l->Wv;
-    const ArrDD Wo = (ArrDD) l->Wo;
+    ArrDD Wq = (ArrDD) l->Wq;
+    ArrDD Wk = (ArrDD) l->Wk;
+    ArrDD Wv = (ArrDD) l->Wv;
+    ArrDD Wo = (ArrDD) l->Wo;
 
-    const ArrTDh Qh = (ArrTDh) l->Qh;
-    const ArrTDh Kh = (ArrTDh) l->Kh;
-    const ArrTDh Vh = (ArrTDh) l->Vh;
+    ArrBHTDh Qh = (ArrBHTDh) l->Qh;
+    ArrBHTDh Kh = (ArrBHTDh) l->Kh;
+    ArrBHTDh Vh = (ArrBHTDh) l->Vh;
 
-    const ArrTT Att = (ArrTT) l->Att;
+    ArrBHTT Att = (ArrBHTT) l->Att;
+    ArrBHTT AttMask = (ArrBHTT) l->AttMask;
 
-    const ArrBTD Out = (ArrBTD) l->Out;
+    ArrBTD Out = (ArrBTD) l->Out;
 
-    fltclr(gWo, D * D);
-    fltclr(dOut, BT * D);
+    /* Step 4 backward - output projection (reverse of Y = Out @ Wo):
+     * gWo  = Out.T @ dY
+     * dOut = dY @ Wo.T
+     */
+    if (dY != NULL) {
+        Tmatmul(gWo,Out,dY,D,BT,D);
+        matmulT(dOut,dY,Wo,BT,D,D);
+    }
+    else {
+        fltclr(gWo,D * D);
+        fltclr(dOut,BT * D);
+    }
 
-    /* Y = Out Wo  →  Eq. (2) */
-    Tmatmul(gWo, Out, dY, D, BT, D);
-    matmulT(dOut, dY, Wo, BT, D, D);
-
-    fltclr(dQ, BT * D);
-    fltclr(dK, BT * D);
-    fltclr(dV, BT * D);
+    fltclr(dQ,BT * D);
+    fltclr(dK,BT * D);
+    fltclr(dV,BT * D);
 
     for (int b = 0; b < B; b++) {
         for (int h = 0; h < H; h++) {
 
+            int base = (b * H + h) * T; /* row offset into [BHT][...] buffers */
+
             /* split dOut */
             for (int t = 0; t < T; t++) {
                 int r = b * T + t;
-                fltcpy(&dOh[t][0], &dOut[r][h * Dh], Dh);
+                fltcpy(&dOh[t][0],&dOut[r][h * Dh],Dh);
             }
 
-            /* Oh = Att @ Vh  - Eq. (1) */
-            Tmatmul(dVh, Att, dOh, T, T, Dh);
-            matmulT(dAtt, dOh, Vh, T, Dh, T);
+            /* Step 3a backward - reverse Oh = Att @ Vh:
+             * dVh  = Att.T @ dOh
+             * dAtt = dOh @ Vh.T
+             */
+            Tmatmul(dVh,&Att[base],dOh,T,T,Dh);
+            matmulT(dAtt,dOh,&Vh[base],T,Dh,T);
 
-            /* softmax backward - Eq. (1), Jacobian */
-            /* dAtt and dScores could be same buffer, but this is clearer */
-            softmax_backward(dScores, dAtt, Att, T, T);
+            /* Step 3b backward - reverse Att = softmax(Scores):
+             * dScores = J_softmax(Att).T @ dAtt   (Jacobian, Sec. 3.2.1)
+             * dScores /= sqrt(Dh)                  (reverse scaling)
+             */
+            if (l->training && l->dropout_rate > 0)
+                for (int i = 0; i < T; i++)
+                    for (int j = 0; j < T; j++)
+                        dAtt[i][j] *= AttMask[base+i][j];
+
+            d_softmax(dScores,dAtt,&Att[base],T,T);
 
             float s = 1.0f / sqrtf((float)Dh);
             for(int i = 0; i < T; i++)
               for(int j = 0; j < T; j++)
                 dScores[i][j] *= s;
 
-            /* Scores = Qh Khᵀ */
-            matmul(dQh, dScores, Kh, T, T, Dh);
-            matmulT(dKh, dScores, Qh, T, Dh, T);
+            /* Step 3c backward - reverse Scores = Qh @ Kh.T:
+             * dQh = dScores @ Kh
+             * dKh = dScores.T @ Qh
+             */
+            matmul(dQh,dScores,&Kh[base],T,T,Dh);
+            Tmatmul(dKh,dScores,&Qh[base],T,T,Dh);
 
-            /* accumulate into full tensors */
+            /* Step 2 backward - accumulate head gradients into full tensors:
+             * dQ[b*T+t][h*Dh+k] += dQh[t][k]
+             * dK[b*T+t][h*Dh+k] += dKh[t][k]
+             * dV[b*T+t][h*Dh+k] += dVh[t][k]
+             */
             for (int a = h * Dh, t = 0; t < T; t++) {
                 int r=b*T+t;
                 for (int k = 0; k < Dh; k++)
@@ -306,23 +410,26 @@ static inline void mha_backward(MHA* restrict l,
                     dK[r][a + k] += dKh[t][k];
                 for (int k = 0; k < Dh; k++)
                     dV[r][a + k] += dVh[t][k];
-            }
+            }            
         }
     }
 
-    /* Q = XWq, etc. - Eq. (3) */
-    fltclr(gWq, D * D);
-    fltclr(gWk, D * D);
-    fltclr(gWv, D * D);
+    /* Step 1 backward - linear projections (reverse of Q=X@Wq, K=X@Wk, V=X@Wv):
+     * gWq = X.T @ dQ,  gWk = X.T @ dK,  gWv = X.T @ dV
+     * dX  = dQ @ Wq.T + dK @ Wk.T + dV @ Wv.T if dX != NULL
+     */
+    fltclr(gWq,D * D);
+    fltclr(gWk,D * D);
+    fltclr(gWv,D * D);
 
-    Tmatmul(gWq, X, dQ, D, BT, D);
-    Tmatmul(gWk, X, dK, D, BT, D);
-    Tmatmul(gWv, X, dV, D, BT, D);
+    Tmatmul(gWq,X,dQ,D,BT,D);
+    Tmatmul(gWk,X,dK,D,BT,D);
+    Tmatmul(gWv,X,dV,D,BT,D);
 
-    if (dX) {
-        matmulT(dX, dQ, Wq, BT, D, D);
-        addMatmulT(dX, dK, Wk, BT, D, D);
-        addMatmulT(dX, dV, Wv, BT, D, D);
+    if (dX != NULL) {
+        matmulT(dX,dQ,Wq,BT,D,D);
+        addMatmulT(dX,dK,Wk,BT,D,D);
+        addMatmulT(dX,dV,Wv,BT,D,D);
     }
 }
 

@@ -42,4 +42,34 @@ static inline void dropout(fArr2D mx_/*[M][N]*/,
     }
 }
 
+/* Applies a precomputed dropout mask to an input array, writing the
+ * result to a separate output array without modifying the input.
+ *
+ * Parameters:
+ *   in_  : Pointer to the 2D input array to be masked
+ *   mk_  : Pointer to the 2D dropout mask array (as produced by dropout())
+ *   out_ : Pointer to the 2D output array to receive the masked result
+ *   M    : Number of rows in the matrix
+ *   N    : Number of columns in the matrix
+ *
+ * Notes:
+ *   - Useful in backward passes where the same gradient value feeds
+ *     both a dropout-masked branch and an unmasked residual branch;
+ *     this keeps the residual gradient untouched while producing a
+ *     separately masked copy for the sub-layer branch.
+ */
+static inline void apply_dropout_mask(const fArr2D in_/*[M][N]*/,
+                                      const fArr2D mk_/*[M][N]*/,
+                                      fArr2D out_/*[M][N]*/,
+                                      int M, int N)
+{
+    typedef float (*ArrMN)[N];
+    const ArrMN in = (const ArrMN) in_;
+    const ArrMN mk = (const ArrMN) mk_;
+    ArrMN out = (ArrMN) out_;
+    for (int i = 0; i < M; i++)
+        for (int j = 0; j < N; j++)
+            out[i][j] = in[i][j] * mk[i][j];
+}
+
 #endif
