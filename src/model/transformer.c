@@ -18,6 +18,8 @@
  *   steps     - sequence length T
  *   model_dim - D
  *   ffn_dim   - FFN hidden dimension Dff (typically 4 * model_dim)
+ *
+ * Note: The original paper uses ReLU. This implementation uses GELU instead.
  */
 TRANSFORMER* transformer_create(int heads, int steps, int model_dim, int ffn_dim)
 {

@@ -98,7 +98,7 @@ void mha_free(MHA* l);
  *
  * Computation (per head h, per batch item b):
  *
- *   Step 1 - Linear projections (Eq. 3, Sec. 3.2.2):
+ *   Step 1 - Linear projections (in Eq. 1, Sec. 3.2.2):
  *     Q = X @ Wq,  K = X @ Wk,  V = X @ Wv
  *
  *   Step 2 - Split into heads (Sec. 3.2.2):
@@ -106,7 +106,7 @@ void mha_free(MHA* l);
  *     Kh = K[b*T:(b+1)*T, h*Dh:(h+1)*Dh]
  *     Vh = V[b*T:(b+1)*T, h*Dh:(h+1)*Dh]
  *
- *   Step 3 - Scaled dot-product attention (Eq. 1, Sec. 3.2.1):
+ *   Step 3 - Scaled dot-product attention (in Eq. 1, Sec. 3.2.1):
  *     Scores = Qh @ Kh.T / sqrt(Dh)
  *     Scores[i][j] = -1e9 for j > i  (causal mask, Sec. 3.2.3)
  *     Att = softmax(Scores)           (row-wise)
@@ -168,7 +168,7 @@ static inline void mha_forward(MHA* restrict l,
 
     ArrBTD Out = (ArrBTD) l->Out;
 
-    /* Step 1 - Linear projections (Eq. 3, Sec. 3.2.2):
+    /* Step 1 - Linear projections (in Eq. 1, Sec. 3.2.2):
      * Q = X @ Wq,  K = X @ Wk,  V = X @ Wv
      */
     matmul(Q,X,Wq,BT,D,D);
@@ -193,7 +193,7 @@ static inline void mha_forward(MHA* restrict l,
                 fltcpy(&Vh[base+t][0],&V[r][h*Dh],Dh);
             }
 
-            /* Step 3 - Scaled dot-product attention (Eq. 1, Sec. 3.2.1):
+            /* Step 3 - Scaled dot-product attention (in Eq. 1, Sec. 3.2.1):
              * Scores = Qh @ Kh.T / sqrt(Dh)
              * Scores[i][j] = -1e9 for j > i  (causal mask, Sec. 3.2.3)
              * Att = softmax(Scores)
@@ -221,7 +221,7 @@ static inline void mha_forward(MHA* restrict l,
                             Scores[j][i] = -1e9f;
             }
 
-            /* Compute attention probabilities - Softmax - Eq. 1 */
+            /* Compute attention probabilities - Softmax - in Eq. 1 */
             softmax(Scores, T, T);
 
             /* Store this head's attention weights for backward */
@@ -230,7 +230,7 @@ static inline void mha_forward(MHA* restrict l,
             if (l->training && l->dropout_rate > 0)
                 dropout(&Att[base],&AttMask[base],T,T,l->dropout_rate);
 
-            /* Eq. 1: Attention @ V */
+            /* in Eq. 1: Attention @ V */
             matmul(Oh,&Att[base],&Vh[base],T,T,Dh);
 
             /* Step 4 - Concatenate heads and project (Eq. 2, Sec. 3.2.2):

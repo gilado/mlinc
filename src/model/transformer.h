@@ -20,8 +20,13 @@
  *        (residual)                               (residual)
  *
  * The FFN is a two-layer feed-forward network:
- *   ffn1: [D -> Dff] with gelu activation
+ *   ffn1: [D -> Dff] with activation
  *   ffn2: [Dff -> D] with no activation
+ *
+ * This layer implements one decoder block.
+ * A complete decoder-only Transformer stacks multiple such layers,
+ * preceded by token and positional embeddings and followed by a linear
+ * projection to vocabulary logits.
  */
 typedef struct {
     int B;              /* Batch size                                    */
@@ -65,6 +70,8 @@ typedef struct {
  *
  * Returns:
  *   Pointer to a zero-initialised TRANSFORMER. Call transformer_init() next.
+ *
+ * Note: The original paper uses ReLU. This implementation uses GELU instead.
  */
 TRANSFORMER* transformer_create(int heads, int steps, int model_dim, int ffn_dim);
 
@@ -86,6 +93,8 @@ void transformer_free(TRANSFORMER* l);
  * Implements the decoder sub-layer stack from Vaswani et al. (2017),
  * "Attention Is All You Need", https://arxiv.org/pdf/1706.03762v7
  *
+ * Note: The original paper uses ReLU. This implementation uses GELU instead.
+ *
  * Parameters:
  *   l        - pointer to the TRANSFORMER layer
  *   X        - input  [B*T][D]
@@ -103,7 +112,7 @@ void transformer_free(TRANSFORMER* l);
  *     norm1_out = LayerNorm(X + mha_out)
  *
  *   Step 3 - Position-wise feed-forward network (Sec. 3.3):
- *     ffn1_out = gelu(norm1_out @ Wx1)         (GELU replaces ReLU)
+ *     ffn1_out = gelu(norm1_out @ Wx1)
  *     ffn2_out = ffn1_out @ Wx2
  *     ffn2_out = dropout(ffn2_out)             (Sec. 5.4)
  *
@@ -157,7 +166,7 @@ static inline void transformer_forward(TRANSFORMER* restrict l,
     addnorm_forward(l->norm2,norm1_out,ffn2_out,Y);
 }
 
-/* transformer_backward -Backward pass of a decoder-only transformer layer.
+/* transformer_backward - backward pass of a decoder-only transformer layer.
  *
  * Computes gradients of the loss with respect to weights and inputs,
  * reversing each step of transformer_forward in order.
