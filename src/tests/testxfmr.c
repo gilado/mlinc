@@ -1,13 +1,16 @@
 /* Copyright (c) 2026 Gilad Odinak */
 /* Tests for the decoder-only transformer layer */
 #include <stdio.h>
-#include <math.h>
+#include <stdlib.h>
 #include <string.h>
+#include <math.h>
 #include <time.h>
 #include "mem.h"
 #include "random.h"
 #include "array.h"
+#include "loss.h"
 #include "transformer.h"
+#include "dense.h"
 
 #define EPS  1e-3
 #define TOL  5e-2
@@ -299,6 +302,199 @@ void test_transformer_dropout(TRANSFORMER* l_train, TRANSFORMER* l_infer)
     printf("  OK\n");
 }
 
+/* Test 5: Training 
+ * Trains a 3-layer transformer to predict the next token in a repeating
+ * cyclic sequence of K=32 tokens: 0,1,2,...,31,0,1,2,...
+ *
+ * Token embeddings are random and fixed (not learned). The transformer
+ * must learn to predict the next token purely from attention over context.
+ *
+ * Architecture per layer:
+ *   D=64, H=4, Dff=256, T=32 (one full cycle as context)
+ */
+#define K      32     /* vocabulary size = cycle length              */
+#define T      32     /* sequence length (one full cycle)            */
+#define D      64     /* model dimension                             */
+#define DFF    256    /* FFN hidden dimension                        */
+#define H      4      /* attention heads                             */
+#define NLYR   3      /* number of transformer layers                */
+#define B      4      /* batch size                                  */
+#define BT     (B*T)  /* flattened batch*seq dimension               */
+#define EPOCHS 1000
+#define LR     1e-3f
+
+/* Linear weight update: W -= lr * gW */
+static void update_vector_weights(fVec V, const fVec gV, int n, float lr)
+{
+    float* v = (float *) V;
+    float* g = (float *) gV;
+    for (int i = 0; i < n; i++)
+        v[i] -= lr * g[i];
+}
+
+static void update_array_weights(fArr2D W, const fArr2D gW, int m, int n, float lr)
+{
+    float* w = (float *) W;
+    float* g = (float *) gW;
+    for (int i = 0; i < m * n; i++)
+        w[i] -= lr * g[i];
+}
+
+/* Update all weights in one transformer layer */
+static void transformer_update(TRANSFORMER* l, float lr)
+{
+    update_array_weights(l->mha->Wq,l->mha->gWq,D,D,lr);
+    update_array_weights(l->mha->Wk,l->mha->gWk,D,D,lr);
+    update_array_weights(l->mha->Wv,l->mha->gWv,D,D,lr);
+    update_array_weights(l->mha->Wo,l->mha->gWo,D,D,lr);
+    update_array_weights(l->ffn1->Wx,l->gWx1,D,DFF,lr);
+    update_array_weights(l->ffn2->Wx,l->gWx2,DFF,D,lr);
+    update_vector_weights(l->norm1->gamma,l->dg1,D,lr);
+    update_vector_weights(l->norm1->beta,l->db1,D,lr);
+    update_vector_weights(l->norm2->gamma,l->dg2,D,lr);
+    update_vector_weights(l->norm2->beta,l->db2,D,lr);
+}
+
+int test_training(void)
+{
+    printf("Test: training multi layer transformer\n");
+
+    /* Fixed random token embeddings [K][D] */
+    float E[K][D];
+    for (int k = 0; k < K; k++)
+        for (int d = 0; d < D; d++)
+            E[k][d] = urand(-0.1,0.1);
+
+    /* Build B sequences offset by 1 in the cycle, each of length T.
+     * Input token at position t in batch b: (b*T + t) % K
+     * Target token (next token): (b*T + t + 1) % K
+     */
+    int tok_in[B][T];
+    int tok_tgt[B][T];
+    for (int b = 0; b < B; b++)
+        for (int t = 0; t < T; t++) {
+            tok_in[b][t]  = (b * T + t) % K;
+            tok_tgt[b][t] = (b * T + t + 1) % K;
+        }
+
+    /* Input embeddings X[BT][D] */
+    float X[BT][D];
+    for (int b = 0; b < B; b++)
+        for (int t = 0; t < T; t++)
+            fltcpy(X[b*T+t],E[tok_in[b][t]],D);
+
+    /* One-hot targets yt[BT][K] for cross-entropy loss */
+    float yt[BT][K];
+    fltclr(yt, BT * K);
+    for (int b = 0; b < B; b++)
+        for (int t = 0; t < T; t++)
+            yt[b * T + t][tok_tgt[b][t]] = 1.0;
+
+    /* Create 3 transformer layers */
+    TRANSFORMER* layers[NLYR];
+    for (int i = 0; i < NLYR; i++) {
+        layers[i] = transformer_create(H,T,D,DFF);
+        transformer_init(layers[i],B,1,0.0);
+    }
+
+    /* Output projection to vocabulary logits, as a dense softmax layer.
+     * Wx has shape [D][K]; forward does matmul + softmax in one call.
+     */
+    DENSE* out = dense_create(K, "Softmax");
+    dense_init(out,D,BT);
+    float gWout[D][K];
+
+    /* Intermediate activations */
+    float act[NLYR+1][BT][D]; /* act[0] = X, act[i] = output of layer i */
+    float dy_out[BT][K];
+    float dact[NLYR+1][BT][D];
+
+    fltcpy(act[0], X, BT * D);
+
+    for (int epoch = 0; epoch < EPOCHS; epoch++) {
+
+        /* Forward pass */
+
+        for (int i = 0; i < NLYR; i++)
+            transformer_forward(layers[i],act[i],NULL,act[i + 1],0);
+
+        fArr2D yp = dense_forward(out,act[NLYR],0);
+
+        float loss = cross_entropy_loss(yp,yt,BT,K);
+        printf("epoch %5d  loss %8.4f\r", epoch + 1, loss / BT);
+        fflush(stdout);
+
+        /* Backward pass */
+
+        /* Gradient of softmax + cross-entropy: dy = (yp - yt) / BT */
+        dLdy_cross_entropy_loss(yp,yt,dy_out,BT,K);
+
+        /* Projection gradients via dense layer (softmax backward is skipped;
+         * dy_out is already yp - yt):
+         *   gWout      = act[NLYR].T @ dy_out
+         *   dact[NLYR] = dy_out @ Wx.T
+         * gWout is cleared first because dense_backward accumulates. */
+        fltclr(gWout, D * K);
+        dense_backward(out, (fArr2D) dy_out, (fArr2D) act[NLYR],
+                       (fArr2D) gWout, (fArr2D) dact[NLYR], 0);
+
+        /* Transformer layers backward */
+        for (int i = NLYR - 1; i >= 0; i--)
+            transformer_backward(layers[i],
+                                 (fArr2D) dact[i+1],
+                                 (fArr2D) act[i],
+                                 (fArr2D) dact[i],
+                                 0);
+
+        /* Weight updates */
+        update_array_weights(out->Wx,gWout,D,K,LR); /* dense update */
+        for (int i = 0; i < NLYR; i++)
+            transformer_update(layers[i], LR);
+    }
+
+    printf("\n");
+
+    /* Evaluate: report per-position accuracy */
+    /* Forward pass with final weights */
+    transformer_forward(layers[0],X,NULL,act[1],0);
+    for (int i = 1; i < NLYR; i++)
+        transformer_forward(layers[i],act[i],NULL,act[i+1],0);
+    fArr2D yp = dense_forward(out,act[NLYR],0);
+
+    float probs[BT][K];
+    fltcpy(probs,yp,BT * K);
+
+    int correct = 0;
+    for (int bt = 0; bt < BT; bt++) {
+        int pred = 0;
+        for (int k = 1; k < K; k++)
+            if (probs[bt][k] > probs[bt][pred])
+                pred = k;
+        int tgt = 0;
+        for (int k = 0; k < K; k++)
+            if (yt[bt][k] > 0.5) { tgt = k; break; }
+        if (pred == tgt) correct++;
+    }
+    float acc = 100.0 * correct / BT;
+    printf("Accuracy: %d / %d (%.1f%%)\n",correct,BT,acc);
+
+    for (int i = 0; i < NLYR; i++)
+        transformer_free(layers[i]);
+    dense_free(out);
+
+    if (acc < 95) {
+        printf("FAIL trainig: predicted tokens differ from expected tokens\n");
+        exit(1);
+    }
+
+    printf("  OK\n");
+
+    return 0;
+}
+
+
+
+
 int main(void)
 {
 //  unsigned int seed = 42; // 1782848145 1550305486
@@ -364,6 +560,8 @@ int main(void)
     test_transformer_dropout(l_train, l_infer);
     transformer_free(l_train);
     transformer_free(l_infer);
+
+    test_training();
 
     printf("\nALL TESTS PASSED\n");
     return 0;
