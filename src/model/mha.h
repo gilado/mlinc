@@ -1,12 +1,17 @@
 /* Copyright (c) 2026 Gilad Odinak */
 /* Multi-Head Attention layer data structures and functions */
-/* Reference: Attention Is All You Need https://arxiv.org/pdf/1706.03762v7 */
+/* References:
+ * Attention Is All You Need, 2023. https://arxiv.org/pdf/1706.03762v7 
+ * Roformer: Enhanced transformer with Rotary Position Embedding, 2023.
+ * https://arxiv.org/pdf/2104.09864
+ */
 #ifndef MHA_H
 #define MHA_H
 #include "float.h"
 #include "array.h"
 #include "activation.h"
 #include "dropout.h"
+#include "rope.h"
 
 typedef struct {
     /* dimensions */
@@ -30,6 +35,8 @@ typedef struct {
     fArr2D K;   /* [BT][D] */
     fArr2D V;   /* [BT][D] */
 
+    fVec theta; /* [Dh/2] RoPE frequency table */
+
     /* Per-(b,h,t) split heads and attention weights, stored for the
      * entire batch so backward can read back exactly what forward
      * computed for each (b,h) pair, rather than recomputing it. 
@@ -38,9 +45,10 @@ typedef struct {
     fArr2D Kh;      /* [BHT][Dh] row (b*H+h)*T+t */
     fArr2D Vh;      /* [BHT][Dh] row (b*H+h)*T+t */
 
-    fArr2D Scores;  /* [T][T]   scratch, not persisted */
     fArr2D Att;     /* [BHT][T] row (b*H+h)*T+t */
     fArr2D AttMask; /* [BHT][T] row (b*H+h)*T+t */
+
+    fArr2D Scores;  /* [T][T]   scratch, not persisted */
     fArr2D Oh;      /* [T][Dh]  scratch, not persisted */
 
     fArr2D Out;     /* [BT][D] */
@@ -94,6 +102,7 @@ void mha_free(MHA* l);
  *   mask      : Integer flag. If non-zero, causal (future) masking is
  *               applied to prevent attention to future positions in each
  *               sequence (used in decoder).
+ *   offset    : Position index of the first token in the sequence
  *   lyr       : Layer index.
  *
  * Computation (per head h, per batch item b):
@@ -131,6 +140,7 @@ static inline void mha_forward(MHA* restrict l,
                                const iVec restrict pad_mask/*[BT]*/,
                                fArr2D Y/*[BT][D]*/,
                                int mask,
+                               int offset,
                                int lyr)
 {
     (void) lyr;
@@ -192,6 +202,9 @@ static inline void mha_forward(MHA* restrict l,
                 fltcpy(&Kh[base+t][0],&K[r][h*Dh],Dh);
                 fltcpy(&Vh[base+t][0],&V[r][h*Dh],Dh);
             }
+
+            rope_apply(&Qh[base],l->theta,0,offset,T,Dh);
+            rope_apply(&Kh[base],l->theta,0,offset,T,Dh);
 
             /* Step 3 - Scaled dot-product attention (in Eq. 1, Sec. 3.2.1):
              * Scores = Qh @ Kh.T / sqrt(Dh)
@@ -393,9 +406,13 @@ static inline void mha_backward(MHA* restrict l,
             /* Step 3c backward - reverse Scores = Qh @ Kh.T:
              * dQh = dScores @ Kh
              * dKh = dScores.T @ Qh
+             * then apply inverse RoPE to dQh and dKh
              */
             matmul(dQh,dScores,&Kh[base],T,T,Dh);
             Tmatmul(dKh,dScores,&Qh[base],T,T,Dh);
+
+            rope_apply(dQh,l->theta,1,0,T,Dh);
+            rope_apply(dKh,l->theta,1,0,T,Dh);
 
             /* Step 2 backward - accumulate head gradients into full tensors:
              * dQ[b*T+t][h*Dh+k] += dQh[t][k]

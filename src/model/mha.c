@@ -3,6 +3,7 @@
 #include <stdio.h>
 #include "mem.h"
 #include "random.h"
+#include "rope.h"
 #include "mha.h"
 
 MHA* mha_create(int heads, int steps)
@@ -39,13 +40,16 @@ void mha_init(MHA* l, int input_dim, int batch_size, int training, float dropout
     l->K = allocmem(l->BT,l->D,float);
     l->V = allocmem(l->BT,l->D,float);
 
+    l->theta = allocmem(1,l->Dh,float);
+
     l->Qh = allocmem(l->BHT,l->Dh,float);
     l->Kh = allocmem(l->BHT,l->Dh,float);
     l->Vh = allocmem(l->BHT,l->Dh,float);
 
-    l->Scores = allocmem(l->T,l->T,float);
     l->Att = allocmem(l->BHT,l->T,float);
     l->AttMask = allocmem(l->BHT,l->T,float);
+
+    l->Scores = allocmem(l->T,l->T,float);
     l->Oh = allocmem(l->T,l->Dh,float);
     
     l->Out = allocmem(l->BT,l->D,float);
@@ -61,6 +65,8 @@ void mha_init(MHA* l, int input_dim, int batch_size, int training, float dropout
     for (int i = 0; i < D2; i++) w[i] = nrand(0,sd);
     w = (float*) l->Wo;
     for (int i = 0; i < D2; i++) w[i] = nrand(0,sd);
+
+    rope_init(l->theta,l->Dh);
 
     if (!training)
         return;
@@ -96,13 +102,16 @@ void mha_free(MHA* l)
     freemem(l->K);
     freemem(l->V);
 
+    freemem(l->theta);
+
     freemem(l->Qh);
     freemem(l->Kh);
     freemem(l->Vh);
 
-    freemem(l->Scores);
     freemem(l->Att);
     freemem(l->AttMask);
+
+    freemem(l->Scores);
     freemem(l->Oh);
     
     freemem(l->Out);

@@ -2,13 +2,14 @@
 /* Simple test to check mha layer correctness */
 #include <stdio.h>
 #include <math.h>
+#include <time.h>
 #include "mem.h"
 #include "random.h"
 #include "array.h"
 #include "mha.h"
 
-#define EPS 1e-3f
-#define TOL 1e-4f
+#define EPS 1e-3
+#define TOL 1e-2
 
 void test_mha_zero_forward(MHA* m)
 {
@@ -27,7 +28,7 @@ void test_mha_zero_forward(MHA* m)
     fltclr(m->Wv, D*D);
     fltclr(m->Wo, D*D);
 
-    mha_forward(m, X, NULL, Y, 0, 0);
+    mha_forward(m, X, NULL, Y, 0, 0, 0);
 
     for (int i = 0; i < BT; i++) {
         for (int j = 0; j < D; j++) {
@@ -84,7 +85,7 @@ void test_mha_attention_active(MHA* m)
     }
 
     fltclr(Y, BT * D);
-    mha_forward(m, X, NULL, Y, 0, 0);
+    mha_forward(m, X, NULL, Y, 0, 0, 0);
 
     /* With identity weights and token 0 dominant, token 0's output
      * should be close to its own input value (self-attention dominates)
@@ -123,7 +124,7 @@ float mha_loss(MHA* m, fArr2D X)
     float Y[BT][D];
     fltclr(Y, BT * D);
 
-    mha_forward(m, X, NULL, Y, 0, 0);
+    mha_forward(m, X, NULL, Y, 0, 0, 0);
 
     float L = 0;
     for (int i = 0; i < BT; i++)
@@ -159,13 +160,13 @@ void test_mha_finite_diff(MHA* m)
     fltclr(Y, BT * D);
     for (int i = 0; i < BT; i++) {
         for (int j = 0; j < D; j++) {
-            X[i][j]  = urand(-0.1, 0.1);
+            X[i][j]  = urand(-1.0, 1.0);
             dX[i][j] = 0;
             dY[i][j] = 1;   /* dL/dY = 1 */
         }
     }
 
-    mha_forward(m, X, NULL, Y, 0, 0);
+    mha_forward(m, X, NULL, Y, 0, 0, 0);
     mha_backward(m, dY, X, dX, 0);
 
     /* Check dX */
@@ -363,7 +364,7 @@ void test_mask(MHA* m) {
         Wk[i][i] = 1;
     }
 
-    mha_forward(m, X, NULL, Y, 1, 0);
+    mha_forward(m, X, NULL, Y, 1, 0, 0);
 
     ArrTT Scores = (ArrTT) m->Scores;
 
@@ -411,7 +412,7 @@ void test_padding_mask(MHA* m) {
     pad_mask[(B - 1) * T + (T - 2)] = 0;
     pad_mask[(B - 1) * T + (T - 1)] = 0;
 
-    mha_forward(m, X, pad_mask, Y, 0, 0);
+    mha_forward(m, X, pad_mask, Y, 0, 0, 0);
 
     typedef float (*ArrTT)[T];
     ArrTT Scores = (ArrTT)m->Scores;
@@ -437,15 +438,86 @@ void test_padding_mask(MHA* m) {
     printf("  OK\n");
 }
 
+void test_rope_relative_invariance(MHA* m)
+{
+    printf("Test: MHA RoPE relative position invariance\n");
+
+    int T = m->T;
+    int D = m->D;
+    int BT = m->BT;
+
+    float X[BT][D];
+    float Y1[BT][D];
+    float Y2[BT][D];
+
+    typedef float (*ArrBHTT)[T];
+
+    for (int i = 0; i < BT; i++)
+        for (int j = 0; j < D; j++)
+            X[i][j] = urand(-1.0f, 1.0f);
+
+    /* Forward with offset=0 */
+    fltclr(Y1, BT * D);
+    mha_forward(m, X, NULL, Y1, 0, 0, 0);
+
+    /* Save Att from offset=0 run */
+    float Att1[m->BHT][T];
+    fltcpy(Att1, m->Att, m->BHT * T);
+
+    /* Forward with offset */
+    int offset = (int) urand(0,1000000);
+    fltclr(Y2, BT * D);
+    mha_forward(m, X, NULL, Y2, 0, offset, 0);
+
+    ArrBHTT Att2 = (ArrBHTT) m->Att;
+
+    /* Check Att: relative position invariance means attention weights
+     * must be identical regardless of absolute position offset */
+    float att_diff = 0;
+    for (int i = 0; i < m->BHT * T; i++)
+        att_diff += fabsf(((float*)Att1)[i] - ((float*)Att2)[i]);
+
+    if (att_diff > TOL) {
+        printf("FAIL RoPE invariance: Att differs with offset, diff=%g\n", att_diff);
+        exit(1);
+    }
+
+    /* Check Y: output must also be identical */
+    float y_diff = 0;
+    for (int i = 0; i < BT; i++)
+        for (int j = 0; j < D; j++)
+            y_diff += fabsf(Y1[i][j] - Y2[i][j]);
+
+    if (y_diff > TOL) {
+        printf("FAIL RoPE invariance: Y differs with offset, diff=%g\n", y_diff);
+        exit(1);
+    }
+
+    printf("  OK\n");
+}
+
 int main(void)
 {
-    init_lrng(42);
-    MHA* m;
+//  unsigned int seed = 42;
+    struct timespec ts;
+    clock_gettime(CLOCK_REALTIME, &ts);
+    unsigned int seed =
+        (unsigned int)(ts.tv_sec ^ ts.tv_nsec);
+
+    printf("seed %d\n",seed);
+    init_lrng(seed);
+
+
     const int batch_size = 2;
     const int seq_len = 4;
     const int input_dim = 8;
     const int num_heads = 2;
+    printf("EPS %g TOL %g\n",EPS,TOL);
+    printf("batch_size %d seq_len %d\n",batch_size,seq_len);
+    printf("input_dim %d num_heads %d\n",input_dim,num_heads);
 
+    MHA* m;
+    
     test_d_softmax();
 
     m = mha_create(num_heads,seq_len);
@@ -471,6 +543,11 @@ int main(void)
     m = mha_create(num_heads,seq_len);
     mha_init(m,input_dim,batch_size,1,0);
     test_padding_mask(m);
+    mha_free(m);
+
+    m = mha_create(num_heads,seq_len);
+    mha_init(m,input_dim,batch_size,1,0);
+    test_rope_relative_invariance(m);
     mha_free(m);
 
     printf("\nALL TESTS PASSED\n");

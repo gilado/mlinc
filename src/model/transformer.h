@@ -27,6 +27,8 @@
  * A complete decoder-only Transformer stacks multiple such layers,
  * preceded by token and positional embeddings and followed by a linear
  * projection to vocabulary logits.
+ *
+ * Note: The original paper uses ReLU. This implementation uses GELU instead.
  */
 typedef struct {
     int B;              /* Batch size                                    */
@@ -70,8 +72,6 @@ typedef struct {
  *
  * Returns:
  *   Pointer to a zero-initialised TRANSFORMER. Call transformer_init() next.
- *
- * Note: The original paper uses ReLU. This implementation uses GELU instead.
  */
 TRANSFORMER* transformer_create(int heads, int steps, int model_dim, int ffn_dim);
 
@@ -140,7 +140,7 @@ static inline void transformer_forward(TRANSFORMER* restrict l,
      * mha_out = MaskedMHA(X)
      * mha_out = dropout(mha_out)
      */
-    mha_forward(l->mha, X, pad_mask, mha_out, /*mask=*/1, lyr);
+    mha_forward(l->mha, X, pad_mask, mha_out, /*mask=*/1, /*offset=*/0, lyr);
     if (l->training && l->dropout_rate > 0)
       dropout(mha_out,drop_mask1,BT,D,l->dropout_rate);
 
