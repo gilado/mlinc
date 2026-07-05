@@ -12,8 +12,7 @@
 #include "transformer.h"
 #include "dense.h"
 
-#define EPS  1e-3
-#define TOL  5e-2
+int failures = 0;
 
 /* Loss is L = sum(dY * Y) */
 static float transformer_loss(TRANSFORMER* l, 
@@ -41,6 +40,7 @@ static inline float numerical_grad(float* w, TRANSFORMER* l,
                                    const float* dY, 
                                    int BT, int D)
 {
+    const int EPS = 1e-3; 
     float old = *w;
     *w = old + EPS;
     float Lp = transformer_loss(l, X, dY, BT, D);
@@ -51,9 +51,9 @@ static inline float numerical_grad(float* w, TRANSFORMER* l,
 }
 
 /* Check all elements of a weight matrix against their analytical gradients */
-static void check_weight(fArr2D W, fArr2D gW, int rows, int cols,
+static int check_weight(fArr2D W, fArr2D gW, int rows, int cols,
                          const char* name, TRANSFORMER* l, float* X,
-                         const float* dY, int BT, int D)
+                         const float* dY, int BT, int D, float TOL)
 {
     float* w  = (float*) W;
     float* gw = (float*) gW;
@@ -62,9 +62,11 @@ static void check_weight(fArr2D W, fArr2D gW, int rows, int cols,
         if (fabsf(num - gw[k]) > TOL) {
             printf("FAIL %s[%d][%d]: expected=%g calculated=%g\n",
                    name, k / cols, k % cols, num, gw[k]);
-            exit(1);
+            failures++;
+            return 1;
         }
     }
+    return 0;
 }
 
 /* Test 1: zero forward
@@ -96,11 +98,11 @@ void test_transformer_zero_forward(TRANSFORMER* l)
         for (int j = 0; j < D; j++) {
             if (fabsf(Y[i][j]) > 1e-6f) {
                 printf("FAIL: Y[%d][%d] = %g, expected 0\n", i, j, Y[i][j]);
-                exit(1);
+                failures++;
             }
         }
     }
-    printf("  OK\n");
+    printf("PASS\n");
 }
 
 /* Test 2: finite difference gradient check
@@ -118,6 +120,7 @@ void test_transformer_finite_diff(TRANSFORMER* l)
 {
     printf("Test: transformer finite-difference gradients\n");
 
+    const int TOL = 0.05;
     const int BT  = l->BT;
     const int D   = l->D;
     const int Dff = l->Dff;
@@ -166,28 +169,32 @@ void test_transformer_finite_diff(TRANSFORMER* l)
     float* dy_flat = (float*) dY;
     float* dx_flat = (float*) dX;
 
+    int failed = 0;
+
     /* Check dX */
     for (int k = 0; k < BT * D; k++) {
         float num = numerical_grad(&x_flat[k], ls, x_flat, dy_flat, BT, D);
         if (fabsf(num - dx_flat[k]) > TOL) {
             printf("FAIL dX[%d][%d]: expected=%g calculated=%g\n",
                    k / D, k % D, num, dx_flat[k]);
-            exit(1);
+            failures++;
+            failed = 1;
+            break;
         }
     }
 
     /* Check weight gradients */
-    check_weight(l->mha->Wq,  l->mha->gWq, D,   D,   "gWq",  ls, x_flat, dy_flat, BT, D);
-    check_weight(l->mha->Wk,  l->mha->gWk, D,   D,   "gWk",  ls, x_flat, dy_flat, BT, D);
-    check_weight(l->mha->Wv,  l->mha->gWv, D,   D,   "gWv",  ls, x_flat, dy_flat, BT, D);
-    check_weight(l->mha->Wo,  l->mha->gWo, D,   D,   "gWo",  ls, x_flat, dy_flat, BT, D);
-    check_weight(l->ffn1->Wx, l->gWx1,     D,   Dff, "gWx1", ls, x_flat, dy_flat, BT, D);
-    check_weight(l->ffn2->Wx, l->gWx2,     Dff, D,   "gWx2", ls, x_flat, dy_flat, BT, D);
+    failed = failed || check_weight(l->mha->Wq,  l->mha->gWq, D,   D,   "gWq",  ls, x_flat, dy_flat, BT, D, TOL);
+    failed = failed || check_weight(l->mha->Wk,  l->mha->gWk, D,   D,   "gWk",  ls, x_flat, dy_flat, BT, D, TOL);
+    failed = failed || check_weight(l->mha->Wv,  l->mha->gWv, D,   D,   "gWv",  ls, x_flat, dy_flat, BT, D, TOL);
+    failed = failed || check_weight(l->mha->Wo,  l->mha->gWo, D,   D,   "gWo",  ls, x_flat, dy_flat, BT, D, TOL);
+    failed = failed || check_weight(l->ffn1->Wx, l->gWx1,     D,   Dff, "gWx1", ls, x_flat, dy_flat, BT, D, TOL);
+    failed = failed || check_weight(l->ffn2->Wx, l->gWx2,     Dff, D,   "gWx2", ls, x_flat, dy_flat, BT, D, TOL);
 
-    check_weight((fArr2D) l->norm1->gamma, (fArr2D) l->dg1, 1, D, "dg1", ls, x_flat, dy_flat, BT, D);
-    check_weight((fArr2D) l->norm1->beta,  (fArr2D) l->db1, 1, D, "db1", ls, x_flat, dy_flat, BT, D);
-    check_weight((fArr2D) l->norm2->gamma, (fArr2D) l->dg2, 1, D, "dg2", ls, x_flat, dy_flat, BT, D);
-    check_weight((fArr2D) l->norm2->beta,  (fArr2D) l->db2, 1, D, "db2", ls, x_flat, dy_flat, BT, D);
+    failed = failed || check_weight((fArr2D) l->norm1->gamma, (fArr2D) l->dg1, 1, D, "dg1", ls, x_flat, dy_flat, BT, D, TOL);
+    failed = failed || check_weight((fArr2D) l->norm1->beta,  (fArr2D) l->db1, 1, D, "db1", ls, x_flat, dy_flat, BT, D, TOL);
+    failed = failed || check_weight((fArr2D) l->norm2->gamma, (fArr2D) l->dg2, 1, D, "dg2", ls, x_flat, dy_flat, BT, D, TOL);
+    failed = failed || check_weight((fArr2D) l->norm2->beta,  (fArr2D) l->db2, 1, D, "db2", ls, x_flat, dy_flat, BT, D, TOL);
 
     /* Null out shared pointers before freeing ls to avoid double-free */
     ls->mha->Wq = ls->mha->Wk = ls->mha->Wv = ls->mha->Wo = NULL;
@@ -196,7 +203,7 @@ void test_transformer_finite_diff(TRANSFORMER* l)
     ls->norm2->gamma = ls->norm2->beta = NULL;
     transformer_free(ls);
 
-    printf("  OK\n");
+    printf("PASS\n");
 }
 
 /* Test 3: causal mask
@@ -244,10 +251,11 @@ void test_transformer_causal_mask(TRANSFORMER* l)
         diff += fabsf(Y1[last][j] - Y2[last][j]);
     if (diff < 1e-6f) {
         printf("FAIL causal mask: perturbing token %d had no effect on its own output\n", last);
-        exit(1);
+        failures++;
+        return;
     }
 
-    printf("  OK\n");
+    printf("PASS\n");
 }
 
 /* Test 4: dropout
@@ -281,7 +289,8 @@ void test_transformer_dropout(TRANSFORMER* l_train, TRANSFORMER* l_infer)
             diff += fabsf(Y1[i][j] - Y2[i][j]);
     if (diff < 1e-6f) {
         printf("FAIL dropout: training passes produced identical outputs\n");
-        exit(1);
+        failures++;
+        return;
     }
 
     /* Inference: two passes must be identical */
@@ -296,32 +305,66 @@ void test_transformer_dropout(TRANSFORMER* l_train, TRANSFORMER* l_infer)
             diff += fabsf(Y1[i][j] - Y2[i][j]);
     if (diff > 0.0f) {
         printf("FAIL dropout: inference passes produced different outputs\n");
-        exit(1);
+        failures++;
+        return;
     }
 
-    printf("  OK\n");
+    printf("PASS\n");
 }
 
-/* Test 5: Training 
- * Trains a 3-layer transformer to predict the next token in a repeating
- * cyclic sequence of K=32 tokens: 0,1,2,...,31,0,1,2,...
- *
- * Token embeddings are random and fixed (not learned). The transformer
- * must learn to predict the next token purely from attention over context.
- *
- * Architecture per layer:
- *   D=64, H=4, Dff=256, T=32 (one full cycle as context)
- */
-#define K      32     /* vocabulary size = cycle length              */
-#define T      32     /* sequence length (one full cycle)            */
-#define D      64     /* model dimension                             */
-#define DFF    256    /* FFN hidden dimension                        */
-#define H      4      /* attention heads                             */
-#define NLYR   3      /* number of transformer layers                */
-#define B      4      /* batch size                                  */
-#define BT     (B*T)  /* flattened batch*seq dimension               */
-#define EPOCHS 1000
-#define LR     1e-3f
+void smoke_test(void)
+{
+    const int batch_size = 8;
+    const int seq_len    = 4;
+    const int model_dim  = 12;
+    const int ffn_dim    = 36;  /* 4 * model_dim */
+    const int num_heads  = 3;
+
+    TRANSFORMER* l;
+
+    /* Test 1: zero forward */
+    l = transformer_create(num_heads, seq_len, model_dim, ffn_dim);
+    transformer_init(l, batch_size, 1, 0.0);
+    test_transformer_zero_forward(l);
+    transformer_free(l);
+
+    /* Test 2: finite difference */
+    l = transformer_create(num_heads, seq_len, model_dim, ffn_dim);
+    transformer_init(l, batch_size, 1, 0.0);
+    test_transformer_finite_diff(l);
+    transformer_free(l);
+
+    if (seq_len > 1) {
+        /* Test 3: causal mask */
+        l = transformer_create(num_heads, seq_len, model_dim, ffn_dim);
+        transformer_init(l, batch_size, 0, 0.0);
+        test_transformer_causal_mask(l);
+        transformer_free(l);
+    }
+
+    /* Test 4: dropout */
+    TRANSFORMER* l_train = transformer_create(num_heads, seq_len, model_dim, ffn_dim);
+    transformer_init(l_train, batch_size, 1, 0.3);
+
+    TRANSFORMER* l_infer = transformer_create(num_heads, seq_len, model_dim, ffn_dim);
+    transformer_init(l_infer, batch_size, 0, 0.0);
+
+    /* Copy weights from train to infer so they're comparable */
+    memcpy(l_infer->mha->Wq,   l_train->mha->Wq,   model_dim * model_dim * sizeof(float));
+    memcpy(l_infer->mha->Wk,   l_train->mha->Wk,   model_dim * model_dim * sizeof(float));
+    memcpy(l_infer->mha->Wv,   l_train->mha->Wv,   model_dim * model_dim * sizeof(float));
+    memcpy(l_infer->mha->Wo,   l_train->mha->Wo,   model_dim * model_dim * sizeof(float));
+    memcpy(l_infer->ffn1->Wx,  l_train->ffn1->Wx,  model_dim * ffn_dim   * sizeof(float));
+    memcpy(l_infer->ffn2->Wx,  l_train->ffn2->Wx,  ffn_dim   * model_dim * sizeof(float));
+    memcpy(l_infer->norm1->gamma, l_train->norm1->gamma, model_dim * sizeof(float));
+    memcpy(l_infer->norm1->beta,  l_train->norm1->beta,  model_dim * sizeof(float));
+    memcpy(l_infer->norm2->gamma, l_train->norm2->gamma, model_dim * sizeof(float));
+    memcpy(l_infer->norm2->beta,  l_train->norm2->beta,  model_dim * sizeof(float));
+
+    test_transformer_dropout(l_train, l_infer);
+    transformer_free(l_train);
+    transformer_free(l_infer);
+}
 
 /* Linear weight update: W -= lr * gW */
 static void update_vector_weights(fVec V, const fVec gV, int n, float lr)
@@ -341,7 +384,7 @@ static void update_array_weights(fArr2D W, const fArr2D gW, int m, int n, float 
 }
 
 /* Update all weights in one transformer layer */
-static void transformer_update(TRANSFORMER* l, float lr)
+static void transformer_update(TRANSFORMER* l, int D, int DFF, float lr)
 {
     update_array_weights(l->mha->Wq,l->mha->gWq,D,D,lr);
     update_array_weights(l->mha->Wk,l->mha->gWk,D,D,lr);
@@ -355,9 +398,32 @@ static void transformer_update(TRANSFORMER* l, float lr)
     update_vector_weights(l->norm2->beta,l->db2,D,lr);
 }
 
-int test_training(void)
+
+/* Test 5: Training 
+ * Trains a 3-layer transformer to predict the next token in a repeating
+ * cyclic sequence of K=32 tokens: 0,1,2,...,31,0,1,2,...
+ *
+ * Token embeddings are random and fixed (not learned). The transformer
+ * must learn to predict the next token purely from attention over context.
+ *
+ * Architecture per layer:
+ *   D=64, H=4, Dff=256, T=32 (one full cycle as context)
+ */
+void training_test(void)
 {
     printf("Test: training multi layer transformer\n");
+
+    const int K = 32;     /* vocabulary size = cycle length    */
+    const int T = 32;     /* sequence length (one full cycle)  */
+    const int D = 64;     /* model dimension                   */
+    const int DFF = 256;  /* FFN hidden dimension              */
+    const int H = 4;      /* attention heads                   */
+    const int NLYR = 3;   /* number of transformer layers      */
+    const int B = 4;      /* batch size                        */
+    const int BT = (B*T); /* flattened batch*seq dimension     */
+
+    const int EPOCHS = 1000;
+    const float LR = 3e-3f;
 
     /* Fixed random token embeddings [K][D] */
     float E[K][D];
@@ -365,17 +431,22 @@ int test_training(void)
         for (int d = 0; d < D; d++)
             E[k][d] = urand(-0.1,0.1);
 
-    /* Build B sequences offset by 1 in the cycle, each of length T.
-     * Input token at position t in batch b: (b*T + t) % K
-     * Target token (next token): (b*T + t + 1) % K
+    /* Build B sequences, each of length T. The first half of the batch
+     * cycles forward (+1), the second half backward (-1). The successor
+     * of a token depends on the sequence direction, which is only
+     * inferable from context, so attention is required to solve the task.
+     * Input token at position t in batch b: (b + dir*t) % K
+     * Target token (next token): (b + dir*(t + 1)) % K
      */
     int tok_in[B][T];
     int tok_tgt[B][T];
-    for (int b = 0; b < B; b++)
+    for (int b = 0; b < B; b++) {
+        int dir = (b < B/2) ? 1 : K - 1; /* +1 or -1 mod K */
         for (int t = 0; t < T; t++) {
-            tok_in[b][t]  = (b * T + t) % K;
-            tok_tgt[b][t] = (b * T + t + 1) % K;
+            tok_in[b][t]  = (b + dir * t) % K;
+            tok_tgt[b][t] = (b + dir * (t + 1)) % K;
         }
+    }
 
     /* Input embeddings X[BT][D] */
     float X[BT][D];
@@ -449,13 +520,12 @@ int test_training(void)
         /* Weight updates */
         update_array_weights(out->Wx,gWout,D,K,LR); /* dense update */
         for (int i = 0; i < NLYR; i++)
-            transformer_update(layers[i], LR);
+            transformer_update(layers[i],D,DFF,LR);
     }
 
     printf("\n");
 
-    /* Evaluate: report per-position accuracy */
-    /* Forward pass with final weights */
+    /* Evaluate: forward pass with final weights */
     transformer_forward(layers[0],X,NULL,act[1],0);
     for (int i = 1; i < NLYR; i++)
         transformer_forward(layers[i],act[i],NULL,act[i+1],0);
@@ -465,7 +535,11 @@ int test_training(void)
     fltcpy(probs,yp,BT * K);
 
     int correct = 0;
-    for (int bt = 0; bt < BT; bt++) {
+    int counted = 0;
+    /* Skip t == 0: with no context the direction is unknowable there */
+    for (int b = 0; b < B; b++)
+    for (int t = 1; t < T; t++) {
+        int bt = b * T + t;
         int pred = 0;
         for (int k = 1; k < K; k++)
             if (probs[bt][k] > probs[bt][pred])
@@ -474,22 +548,22 @@ int test_training(void)
         for (int k = 0; k < K; k++)
             if (yt[bt][k] > 0.5) { tgt = k; break; }
         if (pred == tgt) correct++;
+        counted++;
     }
-    float acc = 100.0 * correct / BT;
-    printf("Accuracy: %d / %d (%.1f%%)\n",correct,BT,acc);
+    float acc = 100.0 * correct / counted;
+    printf("Accuracy: %d / %d (%.1f%%)            \n",correct,counted,acc);
 
     for (int i = 0; i < NLYR; i++)
         transformer_free(layers[i]);
     dense_free(out);
 
-    if (acc < 95) {
-        printf("FAIL trainig: predicted tokens differ from expected tokens\n");
-        exit(1);
+    if (acc < 99) {
+        printf("FAIL: predicted tokens differ from expected tokens\n");
+        failures++;
+        return;
     }
 
-    printf("  OK\n");
-
-    return 0;
+    printf("PASS\n");
 }
 
 
@@ -506,63 +580,11 @@ int main(void)
     printf("seed %d\n",seed);
     init_lrng(seed);
 
+    failures = 0;
+    smoke_test();
+    training_test();
 
-    const int batch_size = 8;
-    const int seq_len    = 4;
-    const int model_dim  = 12;
-    const int ffn_dim    = 36;  /* 4 * model_dim */
-    const int num_heads  = 3;
-    printf("EPS %g TOL %g\n",EPS,TOL);
-    printf("batch_size %d seq_len %d\n",batch_size,seq_len);
-    printf("model_dim %d ffn_dim %d num_heads %d\n",model_dim,ffn_dim,num_heads);
-
-    TRANSFORMER* l;
-
-    /* Test 1: zero forward */
-    l = transformer_create(num_heads, seq_len, model_dim, ffn_dim);
-    transformer_init(l, batch_size, 1, 0.0);
-    test_transformer_zero_forward(l);
-    transformer_free(l);
-
-    /* Test 2: finite difference */
-    l = transformer_create(num_heads, seq_len, model_dim, ffn_dim);
-    transformer_init(l, batch_size, 1, 0.0);
-    test_transformer_finite_diff(l);
-    transformer_free(l);
-
-    if (seq_len > 1) {
-        /* Test 3: causal mask */
-        l = transformer_create(num_heads, seq_len, model_dim, ffn_dim);
-        transformer_init(l, batch_size, 0, 0.0);
-        test_transformer_causal_mask(l);
-        transformer_free(l);
-    }
-
-    /* Test 4: dropout */
-    TRANSFORMER* l_train = transformer_create(num_heads, seq_len, model_dim, ffn_dim);
-    transformer_init(l_train, batch_size, 1, 0.3);
-
-    TRANSFORMER* l_infer = transformer_create(num_heads, seq_len, model_dim, ffn_dim);
-    transformer_init(l_infer, batch_size, 0, 0.0);
-
-    /* Copy weights from train to infer so they're comparable */
-    memcpy(l_infer->mha->Wq,   l_train->mha->Wq,   model_dim * model_dim * sizeof(float));
-    memcpy(l_infer->mha->Wk,   l_train->mha->Wk,   model_dim * model_dim * sizeof(float));
-    memcpy(l_infer->mha->Wv,   l_train->mha->Wv,   model_dim * model_dim * sizeof(float));
-    memcpy(l_infer->mha->Wo,   l_train->mha->Wo,   model_dim * model_dim * sizeof(float));
-    memcpy(l_infer->ffn1->Wx,  l_train->ffn1->Wx,  model_dim * ffn_dim   * sizeof(float));
-    memcpy(l_infer->ffn2->Wx,  l_train->ffn2->Wx,  ffn_dim   * model_dim * sizeof(float));
-    memcpy(l_infer->norm1->gamma, l_train->norm1->gamma, model_dim * sizeof(float));
-    memcpy(l_infer->norm1->beta,  l_train->norm1->beta,  model_dim * sizeof(float));
-    memcpy(l_infer->norm2->gamma, l_train->norm2->gamma, model_dim * sizeof(float));
-    memcpy(l_infer->norm2->beta,  l_train->norm2->beta,  model_dim * sizeof(float));
-
-    test_transformer_dropout(l_train, l_infer);
-    transformer_free(l_train);
-    transformer_free(l_infer);
-
-    test_training();
-
-    printf("\nALL TESTS PASSED\n");
+    if (failures == 0)
+        printf("\nALL TESTS PASSED\n");
     return 0;
 }

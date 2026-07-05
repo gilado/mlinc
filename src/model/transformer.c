@@ -66,7 +66,6 @@ void transformer_init(TRANSFORMER* l, int batch_size, int training, float dropou
 
     l->mha_out = allocmem(BT,D,float);
     l->norm1_out = allocmem(BT,D,float);
-    l->ffn2_out = allocmem(BT,D,float);
 
     if (!training) return;
 
@@ -102,7 +101,6 @@ void transformer_free(TRANSFORMER* l)
     mha_free(l->mha);
     freemem(l->mha_out);
     freemem(l->norm1_out);
-    freemem(l->ffn2_out);
     freemem(l->d_norm2_in);
     freemem(l->d_ffn1_in);
     freemem(l->d_norm1_in);

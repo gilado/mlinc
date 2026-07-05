@@ -45,7 +45,6 @@ typedef struct {
     ADDNORM* norm2;     /* Add-Norm after FFN                            */
     fArr2D mha_out;     /* MHA projection output      [BT][D]            */
     fArr2D norm1_out;   /* Output of norm1            [BT][D]            */
-    fArr2D ffn2_out;    /* Output of ffn2 (pre-norm2) [BT][D]            */
     fArr2D drop_mask1;  /* Dropout mask after MHA     [BT][D]            */
     fArr2D drop_mask2;  /* Dropout mask after FFN     [BT][D]            */
     fArr2D d_norm2_in;  /* Grad w.r.t. ffn2 output / norm2 input [BT][D] */
@@ -133,14 +132,13 @@ static inline void transformer_forward(TRANSFORMER* restrict l,
     ArrBTD mha_out = (ArrBTD) l->mha_out;
     ArrBTD drop_mask1 = (ArrBTD) l->drop_mask1;
     ArrBTD norm1_out = (ArrBTD) l->norm1_out;
-    ArrBTD ffn2_out = (ArrBTD) l->ffn2_out;
     ArrBTD drop_mask2 = (ArrBTD) l->drop_mask2;
 
     /* Step 1 - Masked multi-head self-attention (Sec. 3.2.3):
      * mha_out = MaskedMHA(X)
      * mha_out = dropout(mha_out)
      */
-    mha_forward(l->mha, X, pad_mask, mha_out, /*mask=*/1, /*offset=*/0, lyr);
+    mha_forward(l->mha, X, pad_mask,mha_out,/*mask=*/1,/*offset=*/0,lyr);
     if (l->training && l->dropout_rate > 0)
       dropout(mha_out,drop_mask1,BT,D,l->dropout_rate);
 
@@ -155,8 +153,8 @@ static inline void transformer_forward(TRANSFORMER* restrict l,
      * ffn2_out = dropout(ffn2_out)
      */
     fArr2D ffn1_out = dense_forward(l->ffn1,norm1_out,lyr);
-    fArr2D ffn2_ret = dense_forward(l->ffn2,ffn1_out,lyr);
-    fltcpy(ffn2_out,ffn2_ret,BT * D);
+    fArr2D ffn2_out = dense_forward(l->ffn2,ffn1_out,lyr);
+
     if (l->training && l->dropout_rate > 0)
         dropout(ffn2_out,drop_mask2,BT,D,l->dropout_rate);
 
@@ -248,17 +246,17 @@ static inline void transformer_backward(TRANSFORMER* restrict l,
      */
     fArr2D d_ffn2_in = l->d_ffn2_in;
     if (l->training && l->dropout_rate > 0)
-        apply_dropout_mask(d_norm2_in, l->drop_mask2, d_ffn2_in, BT, D);
+        apply_dropout_mask(d_norm2_in,l->drop_mask2,d_ffn2_in,BT,D);
     else
         d_ffn2_in = (fArr2D) d_norm2_in;
 
     /* Step 3 backward continued
      * (reverse of ffn2_out = ffn1_out @ Wx2):
-     * gWx2      = ffn1_out.T @ d_ffn2_in
+     * gWx2 = ffn1_out.T @ d_ffn2_in
      * d_ffn1_in = d_ffn2_in @ Wx2.T
      * (reverse of ffn1_out = gelu(norm1_out @ Wx1)):
-     * gWx1       = norm1_out.T @ d_ffn1_in
-     * d_norm1_in = d_ffn1_in @ Wx1.T   (through gelu derivative)
+     * gWx1 = norm1_out.T @ d_ffn1_in
+     * d_norm1_in = d_ffn1_in @ Wx1.T (through gelu derivative)
      */
     dense_backward(l->ffn2,d_ffn2_in,l->ffn1->h,l->gWx2,(fArr2D) d_ffn1_in,lyr);
 
@@ -266,7 +264,7 @@ static inline void transformer_backward(TRANSFORMER* restrict l,
 
     /* Residual accumulation for norm2 skip connection:
      * d_norm1_in += d_norm2_in
-     *   (norm1_out feeds both the FFN branch and the AddNorm2 residual)
+     * (norm1_out feeds both the FFN branch and the AddNorm2 residual)
      */
     for (int i = 0; i < BT * D; i++)
         ((float*) d_norm1_in)[i] += ((float*) d_norm2_in)[i];
@@ -287,9 +285,9 @@ static inline void transformer_backward(TRANSFORMER* restrict l,
      */
     fArr2D d_mha_masked = l->d_mha_masked;
     if (l->training && l->dropout_rate > 0)
-        apply_dropout_mask(d_mha_out, l->drop_mask1, d_mha_masked, BT, D);
+        apply_dropout_mask(d_mha_out,l->drop_mask1,d_mha_masked,BT,D);
     else
-        d_mha_masked = (fArr2D) d_mha_out;
+        d_mha_masked = d_mha_out;
 
     mha_backward(l->mha,d_mha_masked,X,dX,lyr);
     if (dX != NULL) {

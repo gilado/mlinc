@@ -28,7 +28,7 @@ int test_lstm(const float range[3], const int layers[], int layers_cnt,
     const int L = layers_cnt + 1;
     const int M = (int) ((range[1] - range[0]) / range[2] + 0.5);
     printf("%d layers (including output layer), %d input samples\n",L,M);
-    const int D = 2;  /* Input vector dimension (including bisas)   */
+    const int D = 2;  /* Input vector dimension (including bias)    */
     const int N = 1;  /* Output vector dimension                    */
     float X[M][D];    /* X[][0] is x values, X[][1] is bias == 1.0  */
     float yt[M][N];   /* True labels vector yt = f(X)               */
