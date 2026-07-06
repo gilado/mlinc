@@ -272,7 +272,7 @@ int test_word_embeddings(int cxt_size, int embedding_dim,
         /* Backward pass */
         dLdy_sparse_cross_entropy_loss(yp[1],labels,dy[1],cxt_cnt,vocab_size);
         dense_backward(dense,dy[1],yp[0],gWx[1],dy[0],1);
-        embedding_backward(embedding,dy[0],contexts,gWx[0],NULL,0);
+        embedding_backward(embedding,dy[0],contexts,gWx[0],0);
 
         /* Update weights */
         update(embedding->Wx,gWx[0],embedding->D,embedding->E,learning_rate);

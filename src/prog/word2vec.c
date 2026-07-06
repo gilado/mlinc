@@ -15,9 +15,7 @@
 #include "random.h"
 #include "array.h"
 #include "hash.h"
-#include "cossim.h"
 #include "newsfile.h"
-#include "loss.h"
 #include "embedding.h"
 
 const char* usage =
@@ -35,61 +33,52 @@ const char* usage =
 "  --vocab-size=<n>   Limit vocabulary size\n"
 "  --vocab-coverage=<f> Limit vocabulary coverage (default 0.95)\n"
 "  --print-vocab      Print vocabulary and exit\n"
-"  --data_dir         Location of training data (defaule data/news)\n"
+"  --data-dir         Location of training data (defaule data/news)\n"
 ;
 
-/* Creates contexts for a text's words. one context per word.
+/* Creates a batch of contexts for words in a larger text sequence.
  *
- * sw  - array of text word indices, in the order of the text
- * swc - number of entries in sw
- * cxt - array that receives the contexts (output); it has swc rows
- * cs  - context size; number of word indices in a context, columns in cxt.
- *       Must be an even number.
+ * Parameters:
+ *   sw     - array of text word indices, in the order of the text
+ *   swc    - number of entries in sw
+ *   start  - offset of the first target word for this batch
+ *   B      - number of rows allocated in cxt and labels
+ *   cxt    - array that receives contexts [B][cs]
+ *   labels - array that receives target word indices [B][1]
+ *   cs     - context size; must be even
  *
- * Each context is stored in a row of cxt array. Assumes cs is an even number.
- * The context consist of the indices of cs/2 words preceding the context's
- * target word, followed by the indices of cs/2 words that come after it,
- * in order,
+ * Note: This function indexes into the full word sequence so 
+ * contexts can include words just outside the current batch.
  */
-void text2cxt(int* sw, int swc, fArr2D cxt_, int cs)
+static void text2cxt(int* sw, int swc, int start, int B,
+                     fArr2D cxt_, fArr2D labels_, int cs)
 {
-    typedef float (*ArrCS)[cs];
-    ArrCS cxt = (ArrCS) cxt_;
+    typedef float (*ArrBC)[cs];
+    typedef float (*ArrB1)[1];
+    ArrBC cxt = (ArrBC) cxt_;
+    ArrB1 labels = (ArrB1) labels_;
 
-    fltclr(cxt,swc * cs); /* Set all elements to the pad (index 0) value */
+    fltclr(cxt,B * cs);
+    fltclr(labels,B);
 
     int m = cs / 2;
-    for (int i = 0; i < swc; i++) {
-        for (int j = m, k = i + 1; j < cs && k < swc; j++, k++)
-            cxt[i][j] = sw[k];
-        for (int j = m - 1, k = i - 1; j >= 0 && k >= 0; j--, k--)
-            cxt[i][j] = sw[k];
-    }
-}
+    for (int b = 0; b < B; b++) {
+        int i = start + b;
+        if (i >= swc)
+            break;
 
-/* Swaps row i with row j of array a[M][N]
- */
-static inline void swap_rows(fArr2D a_, int M, int N, int i, int j)
-{
-    typedef float (*ArrMN)[N];
-    ArrMN a = (ArrMN) a_;
-    (void) M;
-    float t;
-    for (int k = 0; k < N; k++) {
-        t = a[i][k];
-        a[i][k] = a[j][k];
-        a[j][k] = t;
-    }
-}
+        labels[b][0] = sw[i];
 
-/* Shuffles the rows of arrays a[M][N], and l[M][1]
- */
-static void shuffle_samples(fArr2D a, fArr2D l, int M, int N)
-{
-    for (int i = M - 1; i > 0; i--) {
-        int j = (int) urand(0.0,1.0 + i);
-        swap_rows(a,M,N,i,j);
-        swap_rows(l,M,1,i,j);
+        for (int j = 0; j < m; j++) {
+            int k = i - m + j;
+            if (k >= 0)
+                cxt[b][j] = sw[k];
+        }
+        for (int j = 0; j < m; j++) {
+            int k = i + 1 + j;
+            if (k < swc)
+                cxt[b][m + j] = sw[k];
+        }
     }
 }
 
@@ -173,6 +162,8 @@ float negative_sampling_loss(
 
     for (int i = 0; i < B; i++) {
         int target = (int) ((float *)labels)[i];
+        if (target <= 0 || target >= D)
+            continue;
         float dot, p, grad;
 
         // Positive sample dot product
@@ -225,23 +216,6 @@ int qsort_compare_word_freq(const void *a, const void *b)
 {   /* WRDFRQ declared in newsfile.h */
     if (((WRDFRQ *)b)->cnt > ((WRDFRQ *)a)->cnt) return 1;
     if (((WRDFRQ *)b)->cnt < ((WRDFRQ *)a)->cnt) return -1;
-    return 0;
-}
-
-/* Stores cosine similarity of a word to a reference word - used with qsort */
-typedef struct wrdsim_s {
-    int wrdinx;
-    float cossim;
-} WRDSIM;
-
-/* Compare two consine similarity values - used with qsort to order
- * words that are similar to a reference word in descending order,
- * that is, most similar (higest cosine similarity value) first.
- */
-int qsort_compare_similarity(const void *a, const void *b)
-{
-    if (((WRDSIM *)b)->cossim > ((WRDSIM *)a)->cossim) return 1;
-    if (((WRDSIM *)b)->cossim < ((WRDSIM *)a)->cossim) return -1;
     return 0;
 }
 
@@ -366,25 +340,40 @@ int main(int argc, char** argv)
 
     /* Sort vocabulary words by frequency, descending */
     qsort(word_freq,hmap->map_used,sizeof(WRDFRQ),qsort_compare_word_freq);
+
+    /* Reserve word_freq[0] for PAD, matching hashmap index 0.
+     * After this, word_freq[i] describes vocabulary index i.
+     * The last sorted entry is dropped if the table was completely full.
+     */
+    for (int i = hmap->map_used - 1; i > 0; i--)
+        word_freq[i] = word_freq[i - 1];
+    word_freq[0].inx = 0;
+    word_freq[0].cnt = 0;
+    word_freq[0].frq = 0.0f;
+
     int word_cnt = 0;
     if (vocab_size == 0) {
         /* Calculate how many most frequent vocabulary words are needed
-         * to represent vocab_coverage percent of all corpus words
+         * to represent vocab_coverage percent of all corpus words.
+         * vocab_size includes PAD at index 0.
          */
-        for (; vocab_size < hmap->map_used; vocab_size++) {
-            word_cnt += word_freq[vocab_size].cnt;
-            if (word_cnt >= (int) (vocab_coverage * ((float) tot_word_cnt)))
+        int target_word_cnt = (int)(vocab_coverage * ((float)tot_word_cnt));
+        vocab_size = 1; /* Include PAD */
+        for (int vocab_inx = 1; vocab_inx < hmap->map_used; vocab_inx++) {
+            word_cnt += word_freq[vocab_inx].cnt;
+            vocab_size = vocab_inx + 1;
+            if (word_cnt >= target_word_cnt)
                 break;
         }
-        vocab_coverage = ((float) word_cnt) / tot_word_cnt;
     }
     else {
         /* Calculate what percentage of all corpus words can be
-         * represented by the vocab_size most frequent vocabulary words
+         * represented by the vocab_size most frequent vocabulary entries.
+         * vocab_size includes PAD at index 0, which is not counted.
          */
         if (vocab_size > hmap->map_used)
             vocab_size = hmap->map_used;
-        for (int vocab_inx = 0; vocab_inx < vocab_size; vocab_inx++)
+        for (int vocab_inx = 1; vocab_inx < vocab_size; vocab_inx++)
             word_cnt += word_freq[vocab_inx].cnt;
     }
     vocab_coverage = ((float) word_cnt) / tot_word_cnt;
@@ -400,22 +389,22 @@ int main(int argc, char** argv)
     HASHMAP* hmap2 = hashmap_create(vocab_size * 3,hmap->mem_used);
     hashmap_str2inx(hmap2,"",1); /* Reserve first entry (index 0) for pad */
 
-    /* Add words up to vocabulary size (pad already included) */
-    for (int i = 0, j = 0; i < vocab_size - 1 && j < vocab_size - 1; i++) {
+    /* Add words up to vocabulary size. PAD already occupies index 0. */
+    for (int i = 1; i < vocab_size; i++) {
         const char* wrd = hashmap_inx2str(hmap,word_freq[i].inx);
         if (strlen(wrd) == 0)
             continue;
         int inx = hashmap_str2inx(hmap2,wrd,1);
-        word_freq[j++].inx = inx;
+        word_freq[i].inx = inx;
     }
     hashmap_free(hmap);
     hmap = hmap2;
     hmap2 = NULL;
 
     printf("Calculate word frequencies\n");
-    for (int i = 0; i < vocab_size; i++) {
+    word_freq[0].frq = 0.0f;
+    for (int i = 1; i < vocab_size; i++)
         word_freq[i].frq = ((float) word_freq[i].cnt) / word_cnt;
-    }
     
     printf("Creating vocabulary distribution table\n");
     fflush(stdout);
@@ -487,13 +476,18 @@ int main(int argc, char** argv)
             /* Sub sample frequent words by removing some */
             int cnt = 0;
             for (int i = 0; i < fwcnt; i++) {
+                int wrdinx = file_words[i];
+                if (wrdinx <= 0 || wrdinx >= vocab_size)
+                    continue;
                 float r = urand(0,1.0);
                 float t = 1e-5;
-                float f = word_freq[file_words[i]].frq;
+                float f = word_freq[wrdinx].frq;
+                if (f <= 0.0f)
+                    continue;
                 float p = (sqrt(f / t) + 1.0) * (t / f);
                 if (p > 1.0) p = 1.0;
                 if (r < p)
-                    file_words[cnt++] = file_words[i];
+                    file_words[cnt++] = wrdinx;
             }
 
             /* Process each word in current file */
@@ -507,17 +501,14 @@ int main(int argc, char** argv)
                 int wcnt = batch_size;
                 if (i + wcnt >= cnt)
                     wcnt = cnt - i;
-                text2cxt(file_words + i, wcnt, contexts, cxt_size);
+                text2cxt(file_words,cnt,i,batch_size,contexts,labels,cxt_size);
 
-                for (int j = 0, k = i; k < i + wcnt; j++, k++) {
-                    labels[j][0] = file_words[k];
+                for (int j = 0; j < wcnt; j++) {
                     if (labels[j][0] >= vocab_size) {
-                        printf("labels[%d] %g file_word[%d]\n",j,labels[j][0],k);
+                        printf("labels[%d] %g file_word[%d]\n",j,labels[j][0],i + j);
                         exit(1);
                     }
                 }
-
-                shuffle_samples(contexts,labels,wcnt,cxt_size);
 
                 if (wcnt < batch_size) {
                     for (int j = wcnt; j < batch_size; j++) {
@@ -534,7 +525,7 @@ int main(int argc, char** argv)
                                                dist_table,dist_table_size,10);
 
                 /* backward pass */
-                embedding_backward(embedding,dy,contexts,gWx[0],NULL,0);
+                embedding_backward(embedding,dy,contexts,gWx[0],0);
 
                 /* Update weights */
                 update(embedding->Wx,gWx[0],embedding->D,embedding->E,learning_rate);

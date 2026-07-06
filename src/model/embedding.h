@@ -112,7 +112,7 @@ static inline void embedding_backward(EMBEDDING* restrict l,
                                   const fArr2D restrict dy_/*[B][E]*/,
                                   const fArr2D restrict X_/*[B][M]*/,
                                   fArr2D restrict gWx_/*[D][E]*/,
-                                  fArr2D restrict dx_/*[B][M]*/, int lyr)
+                                  int lyr)
 {
     (void) lyr;
     typedef float (*ArrBM)[l->M];
@@ -121,7 +121,6 @@ static inline void embedding_backward(EMBEDDING* restrict l,
     ArrBE dy = (ArrBE) dy_;
     ArrBM X = (ArrBM) X_;
     ArrDE gWx = (ArrDE) gWx_;
-    ArrBM dx = (ArrBM) dx_;
 
     /* X[B][M] => x[B][M][D] where x[B][M] is one-hot encoded */
     /* Gradient with respect to weights: gWx = x.T @ dy */
@@ -131,16 +130,9 @@ static inline void embedding_backward(EMBEDDING* restrict l,
             int xij = (int) X[i][j];
             if (xij != l->padinx) {
                 for (int k = 0; k < l->E; k++)
-                    gWx[xij][k] += dy[i][k] / l->M;
+                    gWx[xij][k] += dy[i][k];
             }
         }
-    }
-    if (dx != NULL) { /* dx = (dy @ Wx.T) */
-        fltclr(dx,l->B * l->M);
-        for (int i = 0; i < l->B; i++)
-            for (int j = 0; j < l->M; j++)
-                for (int k = 0; k < l->E; k++)
-                    dx[i][j] += dy[i][k] / l->M;
     }
 }
 #endif
