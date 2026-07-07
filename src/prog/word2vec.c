@@ -1,14 +1,21 @@
-/* Copyright (c) 2023-2024 Gilad Odinak */
+/* Copyright (c) 2023-2026 Gilad Odinak */
 
-/* This program implements vanilla word2vec based on mikolov's paper.
+/* This program implements vanilla word2vec based on mikolov's papers.
  * The input is a file containing a list of files. Each of these files
  * contains some text.
+ *
+ * References:
+ * - Efficient Estimation of Word Representations in Vector Space
+ *   https://arxiv.org/pdf/1301.3781
+ * - Distributed Representations of Words and Phrases and their Compositionality
+ *   https://arxiv.org/pdf/1310.4546
  */
 #include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 #include <ctype.h>
 #include <math.h>
 #include <getopt.h>
-#include <omp.h>
 #include "mem.h"
 #include "float.h"
 #include "etime.h"
@@ -27,13 +34,14 @@ const char* usage =
 "  -d <embedding_dim> Set embedding dimension (default 100)\n"
 "  -e <num_epochs>    Set number of epochs (default 10)\n"
 "  -i <train_file>    Set training files list (def. news/data/tr_files.lst)\n"
+"  -n <neg_samples>   Num of negative samples per positive target (def 10)\n"
 "  -o <output_file>   Set output embedding file (default word2vec.model)\n"
-"  -r <learning_rate> Set starting learning rate (default 0.05)\n"
+"  -r <learning_rate> Set starting learning rate (default 0.005)\n"
 "  --rd=<f>           Learning rate decay (default 0.8)\n"
 "  --vocab-size=<n>   Limit vocabulary size\n"
-"  --vocab-coverage=<f> Limit vocabulary coverage (default 0.95)\n"
+"  --vocab-coverage=<f> Limit vocabulary coverage (default 0.99)\n"
 "  --print-vocab      Print vocabulary and exit\n"
-"  --data-dir         Location of training data (defaule data/news)\n"
+"  --data-dir         Location of training data (default data/news)\n"
 ;
 
 /* Creates a batch of contexts for words in a larger text sequence.
@@ -47,7 +55,7 @@ const char* usage =
  *   labels - array that receives target word indices [B][1]
  *   cs     - context size; must be even
  *
- * Note: This function indexes into the full word sequence so 
+ * Note: This function indexes into the full word sequence so
  * contexts can include words just outside the current batch.
  */
 static void text2cxt(int* sw, int swc, int start, int B,
@@ -82,20 +90,23 @@ static void text2cxt(int* sw, int swc, int start, int B,
     }
 }
 
-/* Updates layer's weights in a linear way:
- * weight = weight - learning_rate * weight_gradient
- * Wx:  weight matrix [D][N]
- * gWx: gradient matrix [D][N]
- * lr:  learning_rate
+/* Update layer's weights for selected rows.
+ *
+ * Applies weight -= lr * gradient only to the rows listed in rows[nrows].
+ * Used with negative sampling and the embedding backward pass, where eachi
+ * step touches few rows of a large weight matrix.
  */
-static void update(fArr2D Wx_, fArr2D gWx_, int D, int N, float lr)
+static void update(fArr2D Wx_, fArr2D gWx_,
+                   const int* rows, int nrows, int N, float lr)
 {
     typedef float (*ArrDN)[N];
     ArrDN Wx = (ArrDN) Wx_;
     ArrDN gWx = (ArrDN) gWx_;
-    for (int i = 0; i < D; i++)
+    for (int r = 0; r < nrows; r++) {
+        int i = rows[r];
         for (int j = 0; j < N; j++)
             Wx[i][j] -= lr * gWx[i][j];
+    }
 }
 
 /* Returns the embedding vector of a word
@@ -116,10 +127,15 @@ fArr2D create_output_weights(int vocab_size, int embedding_dim)
 {
     typedef float (*ArrDE)[embedding_dim];
     ArrDE Wo = allocmem(vocab_size,embedding_dim,float);
-    float scale = sqrt(2.0 / (vocab_size + embedding_dim));
-    for (int i = 0; i < vocab_size ; i++)
-        for (int j = 0; j < embedding_dim; j++)
-            Wo[i][j] = nrand(0.0,scale);
+    float scale = 1 / sqrtf(embedding_dim);
+    for (int i = 0; i < vocab_size ; i++) {
+        for (int j = 0; j < embedding_dim; j++) {
+            float val = nrand(0.0,scale);
+            while (fabsf(val) >= 2 * scale)
+                val = nrand(0.0,scale);
+            Wo[i][j] = val;
+        }
+    }
     return Wo;
 }
 
@@ -133,17 +149,20 @@ static inline float sigmoid1(float x)
 }
 
 float negative_sampling_loss(
-    fArr2D h_,          /* [B][E] context embeddings */
-    fArr2D labels,      /* [B][1] target word indices */
+    fArr2D h_,          /* [B][E] context embeddings                */
+    fArr2D labels,      /* [B][1] target word indices               */
     fArr2D gEmb_,       /* [B][E] gradients w.r.t. input embeddings */
-    fArr2D Wo_,         /* [D][E] output weights */
-    fArr2D gWo_,        /* [D][E] gradients w.r.t. output weights */
-    int B,              /* batch size */
+    fArr2D Wo_,         /* [D][E] output weights                    */
+    fArr2D gWo_,        /* [D][E] gradients w.r.t. output weights   */
+    int B,              /* batch size          */
     int E,              /* embedding dimension */
-    int D,              /* vocab size */
-    int* dist_table,    /* unigram table for negative sampling */
+    int D,              /* vocab size          */
+    int* dist_table,    /* unigram table for negative sampling       */
     int dist_table_size,
-    int nsamples        /* number of negative samples */
+    int nsamples,       /* number of negative samples                */
+    int* touched,       /* out: distinct gWo rows updated this batch */
+                        /*      buffer size >= B * (nsamples + 1)    */
+    int* ntouched       /* out: number of distinct rows in touched[] */
 )
 {
     typedef float (*ArrBE)[E];
@@ -155,18 +174,19 @@ float negative_sampling_loss(
     ArrDE gWo = (ArrDE) gWo_;
 
     float loss = 0;
+    int nt = 0; /* Number of distinct gWo rows touched this batch */
 
-    // Clear gradients for embeddings and output weights
     fltclr(gEmb, B * E);
-    fltclr(gWo, D * E);
-
+    /* gWo array is large, scales with vocabulary size: each row is zeroed
+     * on first use via prep_row(), proportionally to rows actually touched.
+     */
     for (int i = 0; i < B; i++) {
         int target = (int) ((float *)labels)[i];
         if (target <= 0 || target >= D)
             continue;
         float dot, p, grad;
 
-        // Positive sample dot product
+        /* Positive sample dot product */
         dot = 0;
         for (int j = 0; j < E; j++)
             dot += Wo[target][j] * h[i][j];
@@ -175,20 +195,21 @@ float negative_sampling_loss(
         loss -= logf(p + 1e-8);
         grad = p - 1.0;
 
-        // Gradient updates for positive sample
+        /* Gradient updates for positive sample */
+        prep_row(gWo_,E,target,touched,&nt);
         for (int j = 0; j < E; j++) {
             gWo[target][j] += grad * h[i][j];
             gEmb[i][j]   += grad * Wo[target][j];
         }
 
-        // Negative samples
+        /* Negative samples */
         for (int k = 0; k < nsamples;) {
             int inx = (int)urand(0,dist_table_size);
             int neg = dist_table[inx];
             if (neg == target)
                 continue;
 
-            // Negative sample dot product
+            /* Negative sample dot product */
             dot = 0;
             for (int j = 0; j < E; j++)
                 dot += Wo[neg][j] * h[i][j];
@@ -197,7 +218,8 @@ float negative_sampling_loss(
             loss -= logf(p + 1e-8);
             grad = 1.0 - p;
 
-            // Gradient updates for negative samples
+            /* Gradient updates for negative samples */
+            prep_row(gWo_,E,neg,touched,&nt);
             for (int j = 0; j < E; j++) {
                 gWo[neg][j] += grad * h[i][j];
                 gEmb[i][j] += grad * Wo[neg][j];
@@ -205,6 +227,7 @@ float negative_sampling_loss(
             k++;
         }
     }
+    *ntouched = nt;
     return loss;
 }
 
@@ -234,23 +257,23 @@ int main(int argc, char** argv)
 {
     char* data_dir = "data/news/data"; /* Input */
     char* tr_file = "data/news/tr_files.lst"; /* Input */
-    char* stopwords_file = "data/news/stopwords.txt"; /* Input */
     char* embedding_file = "word2vec.model"; /* Output */
-    float vocab_coverage = 0.95; /* 95% */
+    float vocab_coverage = 0.99; /* 99% */
     int vocab_size = 0; /* Default: size derived from vocab_coverage */
     int embedding_dim = 100;
     int batch_size = 16;
     int cxt_size = 8;
     int num_epochs = 10;
-    float learning_rate = 0.05;
+    float learning_rate = 0.005;
     float learning_rate_decay = 0.8;
     int print_vocab = 0;
     int max_vocab = 3000000;   /* Set to 3 x expected number of unique words */
     int hash_mem = 10000000;   /* hashmap will increase this value as needed */
     int max_file_words = 1000000; /* Maximum number of words per file        */
+    int neg_samples = 10;      /* Negative samples per positive target       */
 
     int opt;
-    while ((opt = getopt(argc,argv,"b:c:d:e:i:o:r:-:h")) != -1) {
+    while ((opt = getopt(argc,argv,"b:c:d:e:i:n:o:r:-:h")) != -1) {
         switch (opt) {
             case 'h': printf(usage); exit(0);
             case 'b': batch_size = atoi(optarg); break;
@@ -258,6 +281,7 @@ int main(int argc, char** argv)
             case 'd': embedding_dim = atoi(optarg); break;
             case 'e': num_epochs = atoi(optarg); break;
             case 'i': tr_file = optarg; break;
+            case 'n': neg_samples = atoi(optarg); break;
             case 'o': embedding_file = optarg; break;
             case 'r': learning_rate = atof(optarg); break;
             case '-':
@@ -291,6 +315,7 @@ int main(int argc, char** argv)
         fprintf(stderr,"word2vec: context size must be an even number. got -c %d\n",cxt_size);
         exit(-1);
     }
+    float initial_learning_rate = learning_rate;
 
     printf("\n");
     printf("Trains an embedding layer to create word embeddings using\n");
@@ -298,21 +323,11 @@ int main(int argc, char** argv)
     printf("context size = %d, embedding dim = %d, batch size = %d\n"
            "%d epochs, learning_rate = %g learning_rate_decay = %g\n",
            cxt_size,embedding_dim,batch_size,
-           num_epochs,learning_rate,learning_rate_decay);
+           num_epochs,initial_learning_rate,learning_rate_decay);
     fflush(stdout);
 
     int tot_file_cnt = 0; /* Total number of files    */
     int tot_word_cnt = 0; /* Total number of words    */
-    int stop_cnt = 0;     /* Number of stop words (including pad) */
-
-    /* Stop words index */
-    HASHMAP* stop_hmap = hashmap_create(max_vocab,hash_mem);
-    hashmap_str2inx(stop_hmap,"",1); /* Reserve first entry (inx 0) for pad */
-    stop_cnt++; /* Count pad as a stop word */
-
-    printf("Loading stop words\n");
-    stop_cnt += process_news_file(stopwords_file,NULL,
-                                  stop_hmap,1,max_vocab,NULL,NULL,0);
 
     printf("Creating vocabulary from dataset\n");
     fflush(stdout);
@@ -334,7 +349,7 @@ int main(int argc, char** argv)
     }
 
     printf("Dataset: %d files, %d words, ",tot_file_cnt,tot_word_cnt);
-    printf("%d unique words, %d stop words\n",hmap->map_used,stop_cnt - 1);
+    printf("%d unique words\n",hmap->map_used);
     printf("%d bytes of word storage memory used\n",hmap->mem_used);
     fflush(stdout);
 
@@ -401,11 +416,11 @@ int main(int argc, char** argv)
     hmap = hmap2;
     hmap2 = NULL;
 
-    printf("Calculate word frequencies\n");
+    printf("Calculating word frequencies\n");
     word_freq[0].frq = 0.0f;
     for (int i = 1; i < vocab_size; i++)
         word_freq[i].frq = ((float) word_freq[i].cnt) / word_cnt;
-    
+
     printf("Creating vocabulary distribution table\n");
     fflush(stdout);
     float dist_compress = 0.75;
@@ -427,7 +442,7 @@ int main(int argc, char** argv)
         for (int k = 0; j < dist_table_size && k < rpt; k++)
             dist_table[j++] = inx;
     }
-    
+
     if (print_vocab) {
         printf("ord   index count word\n");
         for (int i = 0; i < vocab_size; i++) {
@@ -459,6 +474,11 @@ int main(int argc, char** argv)
     fArr2D gWx[2]; /* Gradients with respect to the weights */
     gWx[0] = allocmem(embedding->D,embedding->E,float);
     gWx[1] = allocmem(vocab_size,embedding_dim,float);
+
+    /* Rows of Wo (output weights) touched by negative sampling in one batch */
+    int* touched = allocmem(batch_size * (neg_samples + 1),1,int);
+    /* Rows of Wx (input embeddings) touched per batch: at most B context words */
+    int* touched_in = allocmem(batch_size * cxt_size,1,int);
 
     int* file_words = allocmem(1,max_file_words,int);
     int file_cnt;
@@ -520,24 +540,33 @@ int main(int argc, char** argv)
                 /* Forward pass */
                 fArr2D yp = embedding_forward(embedding,contexts,0);
 
-                loss += negative_sampling_loss(yp,labels,dy,Wo,gWx[1],
-                                               batch_size,embedding_dim,vocab_size,
-                                               dist_table,dist_table_size,10);
+                int ntouched = 0;
+                loss += negative_sampling_loss(
+                                    yp,labels,dy,Wo,gWx[1],
+                                    batch_size,embedding_dim,vocab_size,
+                                    dist_table,dist_table_size,neg_samples,
+                                    touched,&ntouched);
 
                 /* backward pass */
-                embedding_backward(embedding,dy,contexts,gWx[0],0);
+                int ntouched_in = 0;
+                embedding_backward(embedding,dy,contexts,gWx[0],
+                                   touched_in,&ntouched_in,0);
 
-                /* Update weights */
-                update(embedding->Wx,gWx[0],embedding->D,embedding->E,learning_rate);
-                update(Wo,gWx[1],embedding->D,embedding->E,learning_rate);
+                /* Update weights. Both matrices are updated only on the rows
+                 * their sparse gradients actually touched this batch.
+                 */
+                update(embedding->Wx,gWx[0],touched_in,ntouched_in,
+                                                   embedding->E,learning_rate);
+                update(Wo,gWx[1],touched,ntouched,embedding_dim,learning_rate);
 
                 word_cnt += wcnt;
-                int pct = (tot_file_cnt >= 1) ? (((float)file_cnt / tot_file_cnt) * 100) : 100;
+                int pct = (tot_file_cnt >= 1) ?
+                                (((float)file_cnt / tot_file_cnt) * 100) : 100;
                 int seconds = (int) elapsed_time(start_time);
                 int sec = seconds % 60;
                 int min = (seconds / 60) % 60;
                 int hours = seconds / 3600;
-                printf("epoch %2d lr %5.3f loss %6.4f %3d%% "
+                printf("epoch %2d lr %6.4f loss %6.4f %3d%% "
                        "(file %d of %d, %d words) %d:%02d:%02d\r",
                        epoch,learning_rate,loss / word_cnt,pct,
                        file_cnt,tot_file_cnt,word_cnt,hours,min,sec);
@@ -556,7 +585,7 @@ int main(int argc, char** argv)
                 "#,vocab_size,%d,embedding_dim,%d,"
                 "learning_rate,%f,learning_rate_decay,%f,epochs,%d\n",
                 vocab_size,embedding_dim,
-                learning_rate,learning_rate_decay,num_epochs);
+                initial_learning_rate,learning_rate_decay,num_epochs);
 
         typedef float (*ArrDE)[embedding->E];
         ArrDE Wx = (ArrDE) embedding->Wx;
@@ -580,6 +609,8 @@ int main(int argc, char** argv)
     freemem(dy);
     freemem(gWx[0]);
     freemem(gWx[1]);
+    freemem(touched);
+    freemem(touched_in);
     freemem(dist_table);
     freemem(word_freq);
     freemem(file_words);

@@ -1,6 +1,11 @@
 /* Copyright (c) 2023-2024 Gilad Odinak */
-/* Simple test program for the Embedding layer implementation */
+/* Toy test program for the Embedding layer implementation Inspired by
+ * "Linguistic Regularities in Continuous Space Word Representations"
+ * https://aclanthology.org/N13-1090.pdf
+ */
 #include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 #include <ctype.h>
 #include <math.h>
 #include "mem.h"
@@ -14,6 +19,7 @@
 #include "cossim.h"
 #include "normalize.h"
 #include "pca.h"
+
 char *sentences[] = {
     "At dawn, the skilled carpenter began crafting a beautiful wooden table for the village square.",
     "During the grand feast, the jovial king entertained the guests with his witty stories.",
@@ -74,17 +80,17 @@ static inline const char* first_nonletter(const char* s)
  *       Must be an even number.
  *
  * Each context is stored in a row of cxt array. Assumes cs is an even number.
- * The context consist of the indices of cs/2 words preceding the context's 
+ * The context consist of the indices of cs/2 words preceding the context's
  * target word, followed by the indices of cs/2 words that come after it,
- * in order, 
+ * in order,
  */
 static void sent2cxt(int* sw, int swc, fArr2D cxt_, int cs)
 {
     typedef float (*ArrCS)[cs];
     ArrCS cxt = (ArrCS) cxt_;
-    
+
     fltclr(cxt,swc * cs); /* Set all elements to the pad (index 0) value */
-    
+
     int m = cs / 2;
     for (int i = 0; i < swc; i++) {
         for (int j = m, k = i + 1; j < cs && k < swc; j++, k++)
@@ -100,7 +106,7 @@ static inline void swap_rows(fArr2D a_, int M, int N, int i, int j)
 {
     typedef float (*ArrMN)[N];
     ArrMN a = (ArrMN) a_;
-    (void) M; 
+    (void) M;
     float t;
     for (int k = 0; k < N; k++) {
         t = a[i][k];
@@ -120,7 +126,7 @@ static void shuffle_samples(fArr2D a, fArr2D l, int M, int N)
     }
 }
 
-/* Updates layer's weights in a linear way: 
+/* Updates layer's weights in a linear way:
  * weight = weight - learning_rate * weight_gradient
  * Wx:  weight matrix [D][N]
  * gWx: gradient matrix [D][N]
@@ -154,13 +160,13 @@ float* word_embedding(EMBEDDING* embd, int wrdinx)
 typedef struct wrdsim_s {
     int wrdinx;
     float cossim;
-} WRDSIM; 
+} WRDSIM;
 
 /* Compare two consine similarity values - used with qsort to order
- * words that are similar to a reference word in descnding order, 
- * that is, most similar (higest cosine similarity value) first.
+ * words that are similar to a reference word in descending order,
+ * that is, most similar (highest cosine similarity value) first.
  */
-int qsort_compare(const void *a, const void *b) 
+int qsort_compare(const void *a, const void *b)
 {
     float diff = ((WRDSIM *)b)->cossim - ((WRDSIM *)a)->cossim;
     if (diff > 0) return 1;
@@ -168,16 +174,16 @@ int qsort_compare(const void *a, const void *b)
     return 0;
 }
 
-int test_word_embeddings(int cxt_size, int embedding_dim, 
+int test_word_embeddings(int cxt_size, int embedding_dim,
                          int num_epochs, float learning_rate)
 {
     printf("\n");
     printf("Trains an embedding layer to create word embeddings using\n");
-    printf("Continous Bag of Words (CBOW) method\n");
+    printf("Continuous Bag of Words (CBOW) method\n");
     printf("context_size = %d, embedding_dim = %d\n"
            "%d epochs, learning_rate = %g\n\n",
            cxt_size,embedding_dim,num_epochs,learning_rate);
-    /* Calculate irequired size of hashmap that stores unique words */
+    /* Calculate required size of hashmap that stores unique words */
     int sent_cnt = sizeof(sentences) / sizeof(sentences[0]);
     int word_cnt = 0; /* Total number of words    */
     int cxt_cnt = 0;  /* Total number of contexts */
@@ -200,7 +206,7 @@ int test_word_embeddings(int cxt_size, int embedding_dim,
         if (swc > msw_cnt)
             msw_cnt = swc;
     }
-    /* Create hashmap 
+    /* Create hashmap
      * Assume number of unique words << word_cnt, so hashmap is sparse.
      * Similarily space required to store unique words << mem_size
      */
@@ -231,14 +237,17 @@ int test_word_embeddings(int cxt_size, int embedding_dim,
         }
         if (cxt_inx + swc > cxt_cnt)
             swc = cxt_cnt - cxt_inx;
+
         /* Create contexts from sentence word indices */
         sent2cxt(sw,swc,(fArr2D) contexts[cxt_inx],cxt_size);
+
+        /* Label the context */
+        for (int r = 0; r < swc; r++)
+            labels[cxt_inx + r][0] = sw[r];
+
         cxt_inx += swc;
     }
     cxt_cnt = cxt_inx;
-    /* Label the contexts */
-    for (int i = 0; i < cxt_cnt; i++)
-        labels[i][0] = contexts[i][cxt_size / 2];
 
     /* Create and initialize layers */
     int vocab_size = hmap->map_used; /* Already includes pad (at index 0) */
@@ -272,7 +281,7 @@ int test_word_embeddings(int cxt_size, int embedding_dim,
         /* Backward pass */
         dLdy_sparse_cross_entropy_loss(yp[1],labels,dy[1],cxt_cnt,vocab_size);
         dense_backward(dense,dy[1],yp[0],gWx[1],dy[0],1);
-        embedding_backward(embedding,dy[0],contexts,gWx[0],0);
+        embedding_backward(embedding,dy[0],contexts,gWx[0],NULL,NULL,0);
 
         /* Update weights */
         update(embedding->Wx,gWx[0],embedding->D,embedding->E,learning_rate);
@@ -295,8 +304,8 @@ int test_word_embeddings(int cxt_size, int embedding_dim,
     printf("Similarity of 'king' and 'queen' embeding vector: %7.4f\n",
                         cosine_similarity(king_vec,queen_vec,embedding_dim));
 
-    const char* test_word[] = { 
-        "king","man", "warrior", 
+    const char* test_word[] = {
+        "king","man", "warrior",
         "queen","woman", "potter"
     };
     int test_words_cnt = sizeof(test_word) / sizeof(test_word[0]);
@@ -305,8 +314,8 @@ int test_word_embeddings(int cxt_size, int embedding_dim,
         int wrdinx = hashmap_str2inx(hmap,test_word[i],0);
         test_vec[i] = word_embedding(embedding,wrdinx);
     }
-    /* Referecne: 
-     * Computational LinguisticsLinguistic Regularities in Continuous Space Word Representations
+    /* Reference:
+     * Linguistic Regularities in Continuous Space Word Representations
      * https://aclanthology.org/N13-1090.pdf
      */
     float female_king_vec[embedding_dim];
@@ -336,13 +345,13 @@ int test_word_embeddings(int cxt_size, int embedding_dim,
         int rdim = 2;
         float r[nsamples][rdim];
         const char* vector_names[nsamples];
-        
+
         /* test words embeddings + one entry for  king - man + woman */
         for (int i = 0; i < nsamples - 1; i++) {
-            fltcpy(x[i],test_vec[i],embedding_dim);                
+            fltcpy(x[i],test_vec[i],embedding_dim);
             vector_names[i] = test_word[i];
         }
-        /* add king - man + woman vector; it's index == test_words_size */
+        /* add king - man + woman vector; it's index == test_words_cnt */
         fltcpy(x[nsamples - 1],female_king_vec,embedding_dim);
         vector_names[nsamples - 1] = "king - man + woman";
 
@@ -367,12 +376,11 @@ int test_word_embeddings(int cxt_size, int embedding_dim,
     return 0;
 }
 
-extern int32_t lrng_seed;
 int main()
 {
     /* Note that the below parameters as well as the input text
      * were tweaked to yield the desired result of
-     * king - man + woman ~= queen 
+     * king - man + woman --> queen
      */
     init_lrng(2029831955);
     int context_size = 4;
@@ -381,6 +389,4 @@ int main()
     float learning_rate = 0.1;
     test_word_embeddings(context_size,embedding_dim,num_epochs,learning_rate);
     return 0;
-}    
-            
-
+}

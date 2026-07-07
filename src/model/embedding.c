@@ -1,5 +1,6 @@
 /* Copyright (c) 2023-2024 Gilad Odinak */
 /* Embedding neural network layer functions */
+#include <math.h>
 #include "mem.h"
 #include "array.h"
 #include "random.h"
@@ -37,7 +38,7 @@ EMBEDDING* embedding_create(int embedding_dim, int context_len, int padinx)
  *   batch_size - Number of input contexts processed simultaneously
  *
  * Notes:
- *   The network's weights are initialized using uniform distribution 
+ *   The network's weights are initialized using uniform distribution
  */
 void embedding_init(EMBEDDING* l, int vocab_size, int batch_size)
 {
@@ -47,9 +48,11 @@ void embedding_init(EMBEDDING* l, int vocab_size, int batch_size)
     l->Wx = allocmem(l->D,l->E,float);
     typedef float (*ArrDE)[l->E];
     ArrDE Wx = (ArrDE) l->Wx;
+
+    float scale = 1.0 / l->E;
     for (int i = 0; i < l->D; i++)
         for (int j = 0; j < l->E; j++)
-            Wx[i][j] = urand(-0.5,0.5);
+            Wx[i][j] = urand(-scale,scale);
     if (l->padinx >= 0 && l->padinx < vocab_size)
         fltclr(Wx[l->padinx],l->E);
 }
