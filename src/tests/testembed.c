@@ -1,5 +1,7 @@
 /* Copyright (c) 2023-2024 Gilad Odinak */
-/* Toy test program for the Embedding layer implementation Inspired by
+/* 
+ * This file includes some basic tests for the embedding layer,
+ * as well as toy demo program for the Embedding layer, inspired by
  * "Linguistic Regularities in Continuous Space Word Representations"
  * https://aclanthology.org/N13-1090.pdf
  */
@@ -8,6 +10,7 @@
 #include <string.h>
 #include <ctype.h>
 #include <math.h>
+#include <time.h>
 #include "mem.h"
 #include "random.h"
 #include "array.h"
@@ -19,6 +22,276 @@
 #include "cossim.h"
 #include "normalize.h"
 #include "pca.h"
+
+#define EPS 1e-3
+#define TOL 1e-2
+
+/* Test dimensions */
+#define VOCAB 7   /* D: vocabulary size (index 0 is the pad row) */
+#define EMBD  4   /* E: embedding dimension                      */
+#define CTX   4   /* M: context length (must be even)            */
+#define BATCH 5   /* B: number of contexts in a batch            */
+#define PAD   0   /* pad index                                   */
+
+int failures = 0;
+
+/* Builds and initializes a fresh embedding layer with the test dimensions. */
+static EMBEDDING* make_embedding(void)
+{
+    EMBEDDING* l = embedding_create(EMBD, CTX, PAD);
+    embedding_init(l, VOCAB, BATCH);
+    return l;
+}
+
+/* Fills an [B][M] index array with random token indices in [0, D).
+ * Includes the pad index, so pad handling is exercised.
+ */
+static void fill_random_indices(fArr2D X_, int B, int M, int D)
+{
+    typedef float (*ArrBM)[M];
+    ArrBM X = (ArrBM) X_;
+    for (int i = 0; i < B; i++)
+        for (int j = 0; j < M; j++)
+            X[i][j] = (float)(int) urand(0.0, (double) D);
+}
+
+/* Scalar loss L = sum_{i,k} dy[i][k] * h[i][k], where h is the forward output.
+ * Using a random dy (rather than all ones) makes the gradient check sensitive
+ * to per-row/column mistakes, not just to row sums.
+ */
+static float embed_loss(EMBEDDING* l, fArr2D X, fArr2D dy_)
+{
+    typedef float (*ArrBE)[l->E];
+    ArrBE h  = (ArrBE) embedding_forward(l, X, 0);
+    ArrBE dy = (ArrBE) dy_;
+    float L = 0;
+    for (int i = 0; i < l->B; i++)
+        for (int k = 0; k < l->E; k++)
+            L += dy[i][k] * h[i][k];
+    return L;
+}
+
+/* With all weights zero, the forward output must be zero. */
+static void test_embedding_zero_forward(EMBEDDING* l)
+{
+    printf("Test: embedding zero forward\n");
+
+    float X[BATCH][CTX];
+    fill_random_indices((fArr2D) X, l->B, l->M, l->D);
+    fltclr(l->Wx, l->D * l->E);
+
+    typedef float (*ArrBE)[l->E];
+    ArrBE h = (ArrBE) embedding_forward(l, (fArr2D) X, 0);
+
+    for (int i = 0; i < l->B; i++)
+        for (int k = 0; k < l->E; k++)
+            if (fabsf(h[i][k]) > 1e-9f) {
+                printf("FAIL: h[%d][%d]=%g, expected 0\n", i, k, h[i][k]);
+                failures++;
+                return;
+            }
+    printf("PASS\n");
+}
+
+/* With Wx[w][k] = w (each row equals its own index), the output for a context
+ * must equal the sum of that context's indices. Also confirms the pad row
+ * (index 0, value 0) contributes nothing.
+ */
+static void test_embedding_forward_sum(EMBEDDING* l)
+{
+    printf("Test: embedding forward sum\n");
+
+    typedef float (*ArrDE)[l->E];
+    typedef float (*ArrBM)[l->M];
+    typedef float (*ArrBE)[l->E];
+
+    ArrDE Wx = (ArrDE) l->Wx;
+    for (int w = 0; w < l->D; w++)
+        for (int k = 0; k < l->E; k++)
+            Wx[w][k] = (float) w;
+
+    float X[BATCH][CTX];
+    ArrBM Xr = (ArrBM) X;
+    for (int i = 0; i < l->B; i++)
+        for (int j = 0; j < l->M; j++)
+            Xr[i][j] = (float)((i + j) % l->D);   /* deterministic indices */
+
+    ArrBE h = (ArrBE) embedding_forward(l, (fArr2D) X, 0);
+
+    for (int i = 0; i < l->B; i++) {
+        float expect = 0;
+        for (int j = 0; j < l->M; j++)
+            expect += Xr[i][j];        /* row value == index, so h == sum idx */
+        for (int k = 0; k < l->E; k++)
+            if (fabsf(h[i][k] - expect) > TOL) {
+                printf("FAIL: h[%d][%d]=%g, expected %g\n", i, k, h[i][k], expect);
+                failures++;
+                return;
+            }
+    }
+    printf("PASS\n");
+}
+
+/* Compares the analytic weight gradient gWx against a central finite
+ * difference for every non-pad weight, and checks that the pad row receives
+ * exactly zero gradient (it must never be trained).
+ */
+static void test_embedding_finite_diff(EMBEDDING* l)
+{
+    printf("Test: embedding finite-difference gradients (gWx)\n");
+
+    typedef float (*ArrDE)[l->E];
+
+    float X[BATCH][CTX];
+    float dy[BATCH][EMBD];
+
+    ArrDE Wx   = (ArrDE) l->Wx;
+    fArr2D gWx = allocmem(l->D, l->E, float);
+    ArrDE g    = (ArrDE) gWx;
+
+    fill_random_indices((fArr2D) X, l->B, l->M, l->D);
+    for (int i = 0; i < l->B; i++)
+        for (int k = 0; k < l->E; k++)
+            dy[i][k] = urand(-1.0, 1.0);
+
+    /* Analytic gradient (dense path). backward does not read Wx, so later
+     * perturbing Wx for the finite difference leaves g untouched. */
+    embedding_forward(l, (fArr2D) X, 0);
+    embedding_backward(l, (fArr2D) dy, (fArr2D) X, gWx, NULL, NULL, 0);
+
+    /* Pad row must have zero gradient. */
+    for (int k = 0; k < l->E; k++)
+        if (fabsf(g[PAD][k]) > 1e-9f) {
+            printf("FAIL: gWx[pad=%d][%d]=%g, expected 0\n", PAD, k, g[PAD][k]);
+            failures++;
+            return;
+        }
+
+    /* Finite-difference check for every non-pad weight. */
+    for (int w = 0; w < l->D; w++) {
+        if (w == l->padinx)
+            continue;
+        for (int k = 0; k < l->E; k++) {
+            float old = Wx[w][k];
+            Wx[w][k] = old + EPS;
+            float Lp = embed_loss(l, (fArr2D) X, (fArr2D) dy);
+            Wx[w][k] = old - EPS;
+            float Ln = embed_loss(l, (fArr2D) X, (fArr2D) dy);
+            Wx[w][k] = old;
+
+            float num = (Lp - Ln) / (2 * EPS);
+            float ana = g[w][k];
+            if (fabsf(num - ana) > TOL) {
+                printf("FAIL gWx[%d][%d]: numeric=%g analytic=%g\n",
+                       w, k, num, ana);
+                failures++;
+                return;
+            }
+        }
+    }
+    freemem(gWx);
+    printf("PASS\n");
+}
+
+/* The sparse path (grows/grcnt) must produce the same gWx as the dense path,
+ * and grows must list exactly the distinct non-pad context rows.
+ */
+static void test_embedding_sparse_dense_equiv(EMBEDDING* l)
+{
+    printf("Test: embedding sparse vs dense gradient\n");
+
+    typedef float (*ArrDE)[l->E];
+    typedef float (*ArrBM)[l->M];
+
+    float X[BATCH][CTX];
+    float dy[BATCH][EMBD];
+
+    fill_random_indices((fArr2D) X, l->B, l->M, l->D);
+    for (int i = 0; i < l->B; i++)
+        for (int k = 0; k < l->E; k++)
+            dy[i][k] = urand(-1.0, 1.0);
+
+    fArr2D gd = allocmem(l->D, l->E, float);
+    fArr2D gs = allocmem(l->D, l->E, float);
+    fltclr(gd, l->D * l->E);
+    fltclr(gs, l->D * l->E);  /* sparse leaves untouched rows as-is: pre-zero */
+
+    embedding_forward(l, (fArr2D) X, 0);
+    embedding_backward(l, (fArr2D) dy, (fArr2D) X, gd, NULL, NULL, 0);
+
+    int grows[BATCH * CTX];
+    int grcnt = 0;
+    embedding_backward(l, (fArr2D) dy, (fArr2D) X, gs, grows, &grcnt, 0);
+
+    ArrDE A = (ArrDE) gd;
+    ArrDE Bm = (ArrDE) gs;
+    for (int w = 0; w < l->D; w++)
+        for (int k = 0; k < l->E; k++)
+            if (fabsf(A[w][k] - Bm[w][k]) > 1e-6f) {
+                printf("FAIL: gWx[%d][%d] dense=%g sparse=%g\n",
+                       w, k, A[w][k], Bm[w][k]);
+                failures++;
+                return;
+            }
+
+    /* Expected distinct non-pad rows from X. */
+    int seen[l->D];
+    for (int w = 0; w < l->D; w++)
+        seen[w] = 0;
+    ArrBM Xr = (ArrBM) X;
+    int expect = 0;
+    for (int i = 0; i < l->B; i++)
+        for (int j = 0; j < l->M; j++) {
+            int w = (int) Xr[i][j];
+            if (w != l->padinx && !seen[w]) {
+                seen[w] = 1;
+                expect++;
+            }
+        }
+    if (grcnt != expect) {
+        printf("FAIL: grcnt=%d, expected %d distinct non-pad rows\n",
+               grcnt, expect);
+        failures++;
+        return;
+    }
+    /* grows must contain exactly those rows, with no duplicates. */
+    for (int r = 0; r < grcnt; r++) {
+        int w = grows[r];
+        if (w == l->padinx || w < 0 || w >= l->D || !seen[w]) {
+            printf("FAIL: grows[%d]=%d is not a distinct non-pad row\n", r, w);
+            failures++;
+            return;
+        }
+        seen[w] = 0;  /* clear so a duplicate would be caught next time */
+    }
+    freemem(gd);
+    freemem(gs);
+    printf("PASS\n");
+}
+
+int run_tests(void)
+{
+    struct timespec ts;
+    clock_gettime(CLOCK_REALTIME, &ts);
+    unsigned int seed = (unsigned int)(ts.tv_sec ^ ts.tv_nsec);
+    printf("seed %u\n", seed);
+    init_lrng(seed);
+
+    printf("EPS %g TOL %g\n", EPS, TOL);
+    printf("vocab %d embd %d ctx %d batch %d pad %d\n",
+           VOCAB, EMBD, CTX, BATCH, PAD);
+
+    EMBEDDING* l;
+
+    l = make_embedding(); test_embedding_zero_forward(l);        embedding_free(l);
+    l = make_embedding(); test_embedding_forward_sum(l);         embedding_free(l);
+    l = make_embedding(); test_embedding_finite_diff(l);         embedding_free(l);
+    l = make_embedding(); test_embedding_sparse_dense_equiv(l);  embedding_free(l);
+
+    if (failures == 0)
+        printf("\nALL TESTS PASSED\n");
+    return 0;
+}
 
 char *sentences[] = {
     "At dawn, the skilled carpenter began crafting a beautiful wooden table for the village square.",
@@ -174,10 +447,25 @@ int qsort_compare(const void *a, const void *b)
     return 0;
 }
 
-int test_word_embeddings(int cxt_size, int embedding_dim,
-                         int num_epochs, float learning_rate)
+int run_demo(void)
 {
+    /* Note that the below parameters as well as the input text
+     * were tweaked to yield the desired result of
+     *   king - man + woman --> queen
+     * To robustly train word embeddings to produce this result
+     * the raining will need much more data with greater content
+     * variation and large embedding dimention. Nevertheless,
+     * the algorithmic principle stays the same.
+     */
     printf("\n");
+    int seed = 2029831955;
+    printf("seed %u\n", seed);
+    init_lrng(seed);
+    int cxt_size = 4;
+    int embedding_dim = 6;
+    int num_epochs = 100;
+    float learning_rate = 0.1;
+
     printf("Trains an embedding layer to create word embeddings using\n");
     printf("Continuous Bag of Words (CBOW) method\n");
     printf("context_size = %d, embedding_dim = %d\n"
@@ -378,15 +666,7 @@ int test_word_embeddings(int cxt_size, int embedding_dim,
 
 int main()
 {
-    /* Note that the below parameters as well as the input text
-     * were tweaked to yield the desired result of
-     * king - man + woman --> queen
-     */
-    init_lrng(2029831955);
-    int context_size = 4;
-    int embedding_dim = 6;
-    int num_epochs = 100;
-    float learning_rate = 0.1;
-    test_word_embeddings(context_size,embedding_dim,num_epochs,learning_rate);
+    run_tests();
+    run_demo();
     return 0;
 }
