@@ -4,6 +4,7 @@
  */
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <strings.h>
 #include <unistd.h>
 #include <math.h>
@@ -40,7 +41,9 @@ const char* timit_te_file_list = "data/timit/te_file.lst";
 #define TIMIT_TE_MAX_SEQUENCE_CNT    2000
 #define TIMIT_TE_MAX_SAMPLE_CNT    600000
 
-/* Each sequence contains multiple phonemes, find how many in total */
+/* Each sequence contains multiple phonemes, find how many in total.
+ * Notice this function removes the EOP marker the terminal phoneme label.
+ */
 int count_phoneme(int*  yc, int len)
 {
     int cnt = 0;
@@ -164,7 +167,7 @@ int timit_lstm_dense_classification(
 
 
     /* Create file name stem for this run */
-    char ls[40];    
+    char ls[40];
     for (int i = 0, a = 0, n = layers_cnt; i < n; i++)
         a += snprintf(ls + a,sizeof(ls) - a,"%d%s",layers[i],((i<n-1)?"_":""));
     char fns[128];
@@ -178,7 +181,7 @@ int timit_lstm_dense_classification(
     else
         snprintf(fns,sizeof(fns),"e%d-b%d-r%g-w%g-L%s-pid-%d",
              epochs,batch_size,learning_rate,weight_decay,ls,getpid());
-             
+
     typedef float (*ArrMD)[D];
     typedef float (*ArrMN)[N];
     typedef int (*VecM);
@@ -249,7 +252,7 @@ int timit_lstm_dense_classification(
     printf("%d training sequences, %d phonemes, %d samples\n",STr,PTr,MTr);
     printf("%d validation sequences, %d phonemes, %d samples\n\n",SVd,PVd,MVd);
     printf("%d test sequences, %d phonemes, %d samples\n\n",STe,PTe,MTe);
-        
+
     /* Encode yc as one-hot vectors */
     onehot_encode(yTrc,yTrt,MTr,N);
     onehot_encode(yVdc,yVdt,MVd,N);
@@ -271,7 +274,6 @@ int timit_lstm_dense_classification(
                     xVd,yVdt,sVd,SVd,
                     epochs,learning_rate,weight_decay,
                     losses,accuracies,v_losses,v_accuracies,kwargs);
-                    
     }
 
     if (storemodel != NULL) 
@@ -300,15 +302,11 @@ int timit_lstm_dense_classification(
     for (i = 0; i < STe; i++)
         if (sTeMax < sTe[i])
             sTeMax = sTe[i];
-    
+
     ArrMN yp = allocmem(sTeMax,N,float); /* Predicted probabilities */
     VecS ypc = allocmem(sTeMax,1,int);   /* Predicted labels        */
     VecS ytc = allocmem(sTeMax,1,int);   /* True labels             */
-    
-    for (int i = 0; i < nc; i++)
-        for (int j = 0; j < nc; j++)
-            cm[i][j] = 0;
-     
+
     for (i = 0, off = 0; i < STe; off += sTe[i++]) {
         printf("\r%3d sequences out of %d %3d%%",i,STe,off * 100 / MTe);
         fflush(stdout);
@@ -369,7 +367,7 @@ int timit_lstm_dense_classification(
                                                 1.0 - ((float) dist2) / len2);
     printf("Average similarity (with beam search) %5.3f\n",
                                                 1.0 - ((float) dist3) / len3);
-    
+
     char cmfn[512];
     snprintf(cmfn,sizeof(cmfn),"cm-%s.csv",fns);
     printf("Writing confusion matrix to %s\n",cmfn);
@@ -386,7 +384,7 @@ int timit_lstm_dense_classification(
         }
        fclose(fp);   
     }
-    
+
 #ifdef HAS_PLOT
     {
         #include "../plot/plot.h"
@@ -408,6 +406,10 @@ int timit_lstm_dense_classification(
     freemem(sTr);
     freemem(yTrc);
     freemem(yTrt);
+    freemem(xVd);
+    freemem(sVd);
+    freemem(yVdc);
+    freemem(yVdt);
     freemem(xTe);
     freemem(sTe);
     freemem(yTec);
@@ -460,7 +462,7 @@ int main(int argc, char** argv)
             case 'L': 
                 lyrcnt = sscanf(optarg,"%d %d %d %d %d %d %d %d %d %d",&layers[0],
                       &layers[1],&layers[2],&layers[3],&layers[4],&layers[5],
-                      &layers[6],&layers[7],&layers[8],&layers[8]);
+                      &layers[6],&layers[7],&layers[8],&layers[9]);
                 if (lyrcnt > maxlyrcnt) {
                     fprintf(stderr,"timit: too many LSTM layers\n");
                     printf(usage);
