@@ -68,11 +68,15 @@ typedef struct {
  *   steps     - sequence length T
  *   model_dim - D, the model dimension
  *   ffn_dim   - FFN hidden dimension Dff (typically 4 * model_dim)
+ *   lookahead - self-attention masking: <0 bidirectional, 0 causal,
+ *               L causal with L frames of future context
  *
  * Returns:
  *   Pointer to a zero-initialised TRANSFORMER. Call transformer_init() next.
  */
-TRANSFORMER* transformer_create(int heads, int steps, int model_dim, int ffn_dim);
+TRANSFORMER* transformer_create(int heads, int steps, 
+                                int model_dim, int ffn_dim,
+                                int lookahead);
 
 /* transformer_init - initialises weights and allocates scratch buffers.
  *
@@ -138,7 +142,7 @@ static inline void transformer_forward(TRANSFORMER* restrict l,
      * mha_out = MaskedMHA(X)
      * mha_out = dropout(mha_out)
      */
-    mha_forward(l->mha, X, pad_mask,mha_out,/*mask=*/1,/*offset=*/0,lyr);
+    mha_forward(l->mha, X, pad_mask,mha_out,/*offset=*/0,lyr);
     if (l->training && l->dropout_rate > 0)
       dropout(mha_out,drop_mask1,BT,D,l->dropout_rate);
 

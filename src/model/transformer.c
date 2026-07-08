@@ -18,16 +18,22 @@
  *   steps     - sequence length T
  *   model_dim - D
  *   ffn_dim   - FFN hidden dimension Dff (typically 4 * model_dim)
+ *   lookahead - causal masking for self-attention (fixed for the layer):
+ *                 < 0  bidirectional (encoder)
+ *                 = 0  strictly causal (decoder / streaming)
+ *                 = L  causal with L frames of future context
  *
  * Note: The original paper uses ReLU. This implementation uses GELU instead.
  */
-TRANSFORMER* transformer_create(int heads, int steps, int model_dim, int ffn_dim)
+TRANSFORMER* transformer_create(int heads, int steps,
+                                int model_dim, int ffn_dim,
+                                int lookahead)
 {
     TRANSFORMER* l = allocmem(1, 1, TRANSFORMER);
     l->T = steps;
     l->D = model_dim;
     l->Dff = ffn_dim;
-    l->mha = mha_create(heads, steps);
+    l->mha = mha_create(heads, steps, lookahead);
     l->ffn1 = dense_create(ffn_dim,"gelu");
     l->ffn2 = dense_create(model_dim,"none");
     l->norm1 = addnorm_create();

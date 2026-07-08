@@ -23,6 +23,10 @@ typedef struct {
     int BT;     /* B * T */
     int BHT;    /* B * H * T */
 
+    int   lookahead;     /* causal masking, set at create time:
+                          *   < 0  bidirectional (no masking)
+                          *   = 0  strictly causal
+                          *   = L  causal with L frames of future context */
     int   training;      /* 1 if training, 0 if inference */
     float dropout_rate;  /* fraction of attention weights to zero out */
 
@@ -76,10 +80,60 @@ typedef struct {
 
 } MHA;
 
-MHA* mha_create(int heads, int steps);
+/* Creates a Multi-Head Attention layer.
+ *
+ * Allocates the MHA container and records its structural parameters.
+ * Weight matrices and scratch buffers are not allocated until mha_init().
+ *
+ * Parameters:
+ *   heads     - Number of attention heads H. The model dimension passed
+ *               to mha_init() must be an integer multiple of heads.
+ *   steps     - Sequence length T (number of tokens/frames per sequence).
+ *   lookahead - Causal-masking control, fixed for the life of the layer:
+ *                 < 0  no masking, fully bidirectional (encoder)
+ *                 = 0  strictly causal, no future context (decoder/streaming)
+ *                 = L  causal with L frames of future context (bounded latency)
+ *               Position i may attend to position j only when
+ *               j <= i + lookahead. Independent of the padding mask.
+ *
+ * Returns:
+ *   Pointer to a zero-initialised MHA layer. Call mha_init() before use.
+ */
+MHA* mha_create(int heads, int steps, int lookahead);
 
+/* Initialises an MHA layer created by mha_create().
+ *
+ * Sets the model dimension, allocates and randomly initialises the Q/K/V/O
+ * projection weights, builds the RoPE frequency table, and allocates the
+ * forward scratch buffers. Backward buffers and parameter-gradient arrays
+ * are allocated only when training is non-zero.
+ *
+ * Parameters:
+ *   l            - Pointer to the MHA layer from mha_create().
+ *   input_dim    - Model dimension D. Must be an integer multiple of the
+ *                  head count H; the per-head dimension is Dh = D / H.
+ *                  If not divisible, the function prints an error and exits.
+ *   batch_size   - Number of sequences processed simultaneously, B.
+ *   training     - Non-zero to allocate backward/gradient buffers (required
+ *                  before mha_backward()); 0 for inference-only.
+ *   dropout_rate - Fraction of attention weights to zero during training
+ *                  (0 disables dropout).
+ *
+ * Notes:
+ *   Projection weights are drawn from a normal distribution with standard
+ *   deviation sqrt(1/D).
+ */
 void mha_init(MHA* l, int input_dim, int batch_size, int training, float dropout_rate);
 
+/* Releases all memory owned by an MHA layer.
+ *
+ * Frees the projection weights, RoPE table, forward scratch buffers, and
+ * (when allocated) the backward and parameter-gradient buffers, then frees
+ * the layer itself.
+ *
+ * Parameters:
+ *   l - Pointer to the MHA layer to free. Must not be used afterwards.
+ */
 void mha_free(MHA* l);
 
 /* mha_forward - forward pass of Multi-Head Attention (MHA) layer
@@ -99,11 +153,13 @@ void mha_free(MHA* l);
  *               If NULL, no padding mask is applied.
  *   Y         : Output 2D array of shape [B*T][D];
                  if NULL, output projection is skipped.
- *   mask      : Integer flag. If non-zero, causal (future) masking is
- *               applied to prevent attention to future positions in each
- *               sequence (used in decoder).
  *   offset    : Position index of the first token in the sequence
  *   lyr       : Layer index.
+ *
+ * Causal / lookahead masking is fixed per layer and taken from
+ * l->lookahead (set in mha_create): < 0 bidirectional, 0 strictly causal,
+ * L causal with L frames of future context. Position i may attend to
+ * position j only when j <= i + l->lookahead. Independent of pad_mask.
  *
  * Computation (per head h, per batch item b):
  *
@@ -117,7 +173,7 @@ void mha_free(MHA* l);
  *
  *   Step 3 - Scaled dot-product attention (in Eq. 1, Sec. 3.2.1):
  *     Scores = Qh @ Kh.T / sqrt(Dh)
- *     Scores[i][j] = -1e9 for j > i  (causal mask, Sec. 3.2.3)
+ *     Scores[i][j] = -1e9 for j > i + lookahead  (causal/lookahead mask)
  *     Att = softmax(Scores)           (row-wise)
  *     Oh  = Att @ Vh
  *
@@ -139,7 +195,6 @@ static inline void mha_forward(MHA* restrict l,
                                const fArr2D restrict X/*[BT][D]*/,
                                const iVec restrict pad_mask/*[BT]*/,
                                fArr2D Y/*[BT][D]*/,
-                               int mask,
                                int offset,
                                int lyr)
 {
@@ -150,6 +205,7 @@ static inline void mha_forward(MHA* restrict l,
     const int H = l->H;
     const int Dh = l->Dh;
     const int BT = l->BT;
+    const int lookahead = l->lookahead;
 
     typedef float (*ArrDD)[D];
     typedef float (*ArrBTD)[D];
@@ -208,7 +264,7 @@ static inline void mha_forward(MHA* restrict l,
 
             /* Step 3 - Scaled dot-product attention (in Eq. 1, Sec. 3.2.1):
              * Scores = Qh @ Kh.T / sqrt(Dh)
-             * Scores[i][j] = -1e9 for j > i  (causal mask, Sec. 3.2.3)
+             * Scores[i][j] = -1e9 for j > i + lookahead  (causal/lookahead mask)
              * Att = softmax(Scores)
              * Oh  = Att @ Vh
              */
@@ -219,11 +275,14 @@ static inline void mha_forward(MHA* restrict l,
                 for(int j = 0; j < T; j++)
                     Scores[i][j] *= s;
 
-            if (mask) {
-                /* Prevent attending to future positions - Fig. 2 */
-                /* Also section 3.2.3 */
+            /* Causal / lookahead masking (Sec. 3.2.3, Fig. 2 generalised).
+             *   lookahead <  0 : skip - fully bidirectional attention
+             *   lookahead == 0 : strictly causal (mask every future frame)
+             *   lookahead == L : allow L future frames, mask beyond that
+             * Position i attends to j only where j <= i + lookahead. */
+            if (lookahead >= 0) {
                 for (int i = 0; i < T; i++)
-                    for (int j = i + 1; j < T; j++)
+                    for (int j = i + lookahead + 1; j < T; j++)
                         Scores[i][j] = -1e9f;
             }
 

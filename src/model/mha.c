@@ -6,14 +6,56 @@
 #include "rope.h"
 #include "mha.h"
 
-MHA* mha_create(int heads, int steps)
+/* Creates a Multi-Head Attention layer.
+ *
+ * Allocates the MHA container and records its structural parameters.
+ * Weight matrices and scratch buffers are not allocated until mha_init().
+ *
+ * Parameters:
+ *   heads     - Number of attention heads H. The model dimension passed
+ *               to mha_init() must be an integer multiple of heads.
+ *   steps     - Sequence length T (number of tokens/frames per sequence).
+ *   lookahead - Causal-masking control, fixed for the life of the layer:
+ *                 < 0  no masking, fully bidirectional (encoder)
+ *                 = 0  strictly causal, no future context (decoder/streaming)
+ *                 = L  causal with L frames of future context (bounded latency)
+ *               Position i may attend to position j only when
+ *               j <= i + lookahead. Independent of the padding mask.
+ *
+ * Returns:
+ *   Pointer to a zero-initialised MHA layer. Call mha_init() before use.
+ */
+MHA* mha_create(int heads, int steps, int lookahead)
 {
     MHA* l = allocmem(1,1,MHA);
     l->H = heads;
     l->T = steps;
+    l->lookahead = lookahead;
     return l;
 }
 
+/* Initialises an MHA layer created by mha_create().
+ *
+ * Sets the model dimension, allocates and randomly initialises the Q/K/V/O
+ * projection weights, builds the RoPE frequency table, and allocates the
+ * forward scratch buffers. Backward buffers and parameter-gradient arrays
+ * are allocated only when training is non-zero.
+ *
+ * Parameters:
+ *   l            - Pointer to the MHA layer from mha_create().
+ *   input_dim    - Model dimension D. Must be an integer multiple of the
+ *                  head count H; the per-head dimension is Dh = D / H.
+ *                  If not divisible, the function prints an error and exits.
+ *   batch_size   - Number of sequences processed simultaneously, B.
+ *   training     - Non-zero to allocate backward/gradient buffers (required
+ *                  before mha_backward()); 0 for inference-only.
+ *   dropout_rate - Fraction of attention weights to zero during training
+ *                  (0 disables dropout).
+ *
+ * Notes:
+ *   Projection weights are drawn from a normal distribution with standard
+ *   deviation sqrt(1/D).
+ */
 void mha_init(MHA* l, int input_dim, int batch_size, int training, float dropout_rate)
 {
     if (input_dim % l->H != 0) {
@@ -40,7 +82,7 @@ void mha_init(MHA* l, int input_dim, int batch_size, int training, float dropout
     l->K = allocmem(l->BT,l->D,float);
     l->V = allocmem(l->BT,l->D,float);
 
-    l->theta = allocmem(1,l->Dh,float);
+    l->theta = allocmem(1,l->Dh / 2,float);
 
     l->Qh = allocmem(l->BHT,l->Dh,float);
     l->Kh = allocmem(l->BHT,l->Dh,float);
@@ -91,6 +133,15 @@ void mha_init(MHA* l, int input_dim, int batch_size, int training, float dropout
     l->gWo = allocmem(l->D,l->D,float);    
 }
 
+/* Releases all memory owned by an MHA layer.
+ *
+ * Frees the projection weights, RoPE table, forward scratch buffers, and
+ * (when allocated) the backward and parameter-gradient buffers, then frees
+ * the layer itself.
+ *
+ * Parameters:
+ *   l - Pointer to the MHA layer to free. Must not be used afterwards.
+ */
 void mha_free(MHA* l)
 {
     freemem(l->Wq);
