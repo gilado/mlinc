@@ -375,7 +375,7 @@ void model_fit(MODEL* m,
              */
             switch(m->loss_func) {
                 case 'm':
-                    loss += mean_square_error(yp[L - 1],yt,cnt,N);
+                    loss += mean_square_error(yp[L - 1],yt,cnt,N) * 100;
                     match_cnt += R2_sum(yp[L - 1],yt,cnt,N);
                     dLdy_mean_square_error(yp[L - 1],yt,dy[L - 1],cnt,N);
                 break;
@@ -432,7 +432,7 @@ void model_fit(MODEL* m,
 
                 switch(m->loss_func) {
                     case 'm':
-                        v_loss += mean_square_error(yp[L - 1],yt,cnt,N);
+                        v_loss += mean_square_error(yp[L - 1],yt,cnt,N) * 100;
                         v_match_cnt += R2_sum(yp[L - 1],yt,cnt,N);
                     break;
                     case 'c':
