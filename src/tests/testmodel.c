@@ -657,71 +657,86 @@ int test_lstm_dense_classification(
     return 0;
 }
 
-/* Trains  dense(projection) -> transformer stack -> dense(output)  to predict
- * the Causal Running Mean of a signal:
+/* Trains  dense(projection) -> transformer stack -> dense(output)  on a
+ * selective-retrieval task ("last-pulse hold").
  *
- *     v[t]  = f(x_t)
- *     yt[t] = (1/(t+1)) * sum_{i=0..t} v[i]
+ * The input sequence is small random noise with occasional large "pulses"
+ * placed at random, long-gap intervals:
  *
- * This is a pure aggregation-over-the-past task. The dense projection and the
- * transformer's feed-forward blocks are position-wise and cannot combine
- * values from different time steps; only the (causal) self-attention can
- * average over preceding positions. With equal attention scores the softmax
- * over the t+1 visible keys yields weights of exactly 1/(t+1), i.e. the mean,
- * so the model can learn this by learning near-uniform causal attention.
- * A dense- or FFN-only model cannot fit it - which is the point of the test.
+ *     x[t] = pulse_value          if t is a pulse position (|value| >= 1)
+ *          = small noise          otherwise                (|value| <  0.2)
  *
- * The transformer preserves its model dimension, so a dense layer first
- * projects the D-dimensional input up to model_dim, and a final dense layer
- * projects back down to the single output.
+ * The target at every position is the value of the MOST RECENT pulse at or
+ * before t, held until the next pulse:
  *
- * Constraints enforced by the model/layer integration:
+ *     yt[t] = value of the latest pulse in x[0..t]   (0 before the first)
+ *
+ * To produce yt[t] at a noise position, the model must look back to a
+ * specific, possibly distant position - the nearest large-magnitude token -
+ * and copy its value, ignoring all the noise in between. This is exactly the
+ * content-based selective retrieval that attention provides and that a
+ * position-wise FFN, a convolution, or an averaging/pooling model cannot do:
+ * the answer is neither the current input nor an aggregate of the past, but a
+ * single earlier value identified by its content. Long gaps between pulses
+ * make the retrieval genuinely long-range, so "attend one or two steps back"
+ * does not suffice.
+ *
+ * Causal attention (lookahead = 0) is used since the relevant pulse is always
+ * in the past. The transformer preserves its model dimension, so a dense layer
+ * first projects the input up to model_dim and a final dense layer projects
+ * back to the single output.
+ *
+ * Constraints from the model/layer integration:
  *   - model_dim must be an integer multiple of heads,
  *   - the model batch size must be B*T; here one sequence (B=1) of length
- *     T = number of samples, so batch_size == T.
- *
- * range[0] - lowest input (x) value
- * range[1] - highest input (x) value (exclusive)
- * range[2] - increment between x values
+ *     T = seq_len, so batch_size == seq_len.
  */
-int test_transformer_regression(const float range[3],
-                                int heads, int model_dim, int ffn_dim,
-                                int n_layers, const char* optimizer,
-                                float learning_rate, float weight_decay,
-                                int epochs)
+int test_transformer_retrieval(int seq_len,
+                               int heads, int model_dim, int ffn_dim,
+                               int n_layers, const char* optimizer,
+                               float learning_rate, float weight_decay,
+                               int epochs)
 {
-    #undef f
-    #define f(x) (sin(x) + 0.4 * sin(1.6 + 1.5 * (x)))
-    char* title = "causal running mean of sin(x)+0.4 sin(1.6+1.5x)";
-    printf("\n\nTrains dense + transformer + dense to predict the\n"
-           "causal running mean of  f(x) = sin(x) + 0.4 sin(1.6 + 1.5x)\n\n");
+    char* title = "last-pulse hold (selective retrieval)";
+    printf("\n\nTrains dense + transformer + dense on a selective-retrieval\n"
+           "task: output the value of the most recent pulse (last-pulse hold)\n\n");
 
-    const int T = (int) ((range[1] - range[0]) / range[2] + 0.5); /* seq len */
-    const int M = T;            /* rows = B*T with B = 1                     */
-    const int L = n_layers + 2; /* proj dense + n transformers + out dense   */
-    const int D = 2;            /* input dim: value + bias                   */
-    const int N = 1;            /* output dim                                */
-    printf("%d layers (projection + %d transformer + output), seq length %d\n",
-           L,n_layers,T);
-    printf("model_dim %d, heads %d, ffn_dim %d\n",model_dim,heads,ffn_dim);
+    const int T = seq_len;      /* sequence length                          */
+    const int M = T;            /* rows = B*T with B = 1                    */
+    const int L = n_layers + 2; /* proj dense + n transformers + out dense  */
+    const int D = 2;            /* input dim: value + bias                  */
+    const int N = 1;            /* output dim                               */
 
-    float X[M][D];    /* X[t][0] = v[t] = f(x_t), X[t][1] = bias = 1.0       */
-    float yt[M][N];   /* True labels: causal running mean of v               */
-    float y[M][N];    /* Output predictions                                  */
-    float xv[M];      /* x values, for plotting                              */
+    float X[M][D];    /* X[t][0] = signal (noise or pulse), X[t][1] = bias  */
+    float yt[M][N];   /* True labels: value of most recent pulse            */
+    float y[M][N];    /* Output predictions                                 */
+    float xv[M];      /* position index, for plotting                      */
 
-    /* Initialize data */
-    float x = range[0];
-    float sum = 0;
+    /* Generate noise + pulses, and the last-pulse-hold target */
+    float last = 0.0f;                   /* value of most recent pulse       */
+    int   next = 5 + (int) urand(0.0f, 8.0f); /* first pulse position        */
+    int   npulses = 0;
     for (int t = 0; t < M; t++) {
-        float v = f(x);
+        float v;
+        if (t == next) {                 /* place a pulse                    */
+            float mag = 1.0f + urand(0.0f, 2.0f);            /* 1.0 .. 3.0    */
+            float sgn = (urand(0.0f, 1.0f) < 0.5f) ? -1.0f : 1.0f;
+            v = sgn * mag;
+            last = v;
+            npulses++;
+            next = t + 8 + (int) urand(0.0f, 11.0f);         /* gap 8 .. 18   */
+        }
+        else {
+            v = urand(-0.2f, 0.2f);      /* small noise                      */
+        }
         X[t][0] = v;
-        X[t][1] = 1.0;
-        sum += v;
-        yt[t][0] = sum / (t + 1);   /* causal running mean */
-        xv[t] = x;
-        x += range[2];
+        X[t][1] = 1.0f;
+        yt[t][0] = last;                 /* hold the last pulse value        */
+        xv[t] = (float) t;
     }
+    printf("%d layers (projection + %d transformer + output), seq length %d, "
+           "%d pulses\n",L,n_layers,T,npulses);
+    printf("model_dim %d, heads %d, ffn_dim %d\n",model_dim,heads,ffn_dim);
 
     /* Create model (single batch = one sequence of all T samples) */
     MODEL* m = model_create(L,M,D,0,0); /* don't add bias, don't normalize */
@@ -751,7 +766,6 @@ int test_transformer_regression(const float range[3],
 #ifdef HAS_PLOT
     {
         #include "../plot/plot.h"
-        /* Prediction vs. truth over x, plus the loss and accuracy curves. */
         plot_graph(xv,(float*)y,(float*)yt,M,
                    epochs,losses,accuracies,NULL,NULL,title);
     }
@@ -760,11 +774,13 @@ int test_transformer_regression(const float range[3],
     (void) losses;
     (void) title;
     {
-        int step = (M > 20) ? M / 20 : 1;
-        printf("   x      input v    target     pred\n");
-        for (int t = 0; t < M; t += step)
-            printf("%7.2f  %8.3f  %8.3f  %8.3f\n",
-                   xv[t],X[t][0],yt[t][0],y[t][0]);
+        int step = (M > 24) ? M / 24 : 1;
+        printf("  t    input     target     pred    %s\n","(* = pulse)");
+        for (int t = 0; t < M; t += step) {
+            int is_pulse = (fabsf(X[t][0]) >= 0.5f);
+            printf("%4d  %7.3f  %8.3f  %8.3f   %s\n",
+                   t,X[t][0],yt[t][0],y[t][0],is_pulse ? "*" : "");
+        }
     }
     printf("\n");
 #endif
@@ -803,7 +819,7 @@ int main(int argc, char** argv)
         init_lrng(42);
         const int layers[3] = {32,128,32};
         const float range[3] = {0.0,5.0,0.1};
-        test_dense_regression(range,layers,3,"linear",0.0008,0.008,30000);
+        test_dense_regression(range,layers,3,"linear",0.0008,0.008,10000);
     }
     if (tests[1]) {
         init_lrng(42);
@@ -830,19 +846,20 @@ int main(int argc, char** argv)
     if (tests[5]) {
         init_lrng(42);
 
-        /* range gives T = 200 time steps (x from -10 to 10 step 0.1) */
-        const float range[3] = { -10.0, 10.0, 0.1 };
+        init_lrng(42);
+
+        const int seq_len = 120;   /* sequence length T                    */
         const int heads = 4;
-        const int model_dim = 32; /* must be a multiple of heads */
-        const int ffn_dim = 128;  /* 4 * model_dim               */
-        const int n_layers = 2;   /* transformer layers          */
+        const int model_dim = 32;  /* must be a multiple of heads          */
+        const int ffn_dim = 128;   /* 4 * model_dim                        */
+        const int n_layers = 2;    /* transformer layers                   */
         const char* optimizer = "adamw";
         const float lr = 0.0005;
         const float wd = 0.01;
-        const int epochs = 1000;
+        const int epochs = 1100;
 
-        test_transformer_regression(range,heads,model_dim,ffn_dim,
-                                    n_layers,optimizer,lr,wd,epochs);
+        test_transformer_retrieval(seq_len,heads,model_dim,ffn_dim,
+                                   n_layers,optimizer,lr,wd,epochs);
     }
     printf("\nAll tests completed\n\n");
     return 0;
