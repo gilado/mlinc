@@ -657,134 +657,138 @@ int test_lstm_dense_classification(
     return 0;
 }
 
-/* Trains  dense(projection) -> transformer stack -> dense(output)  on a
+/* Trains dense(projection) -> transformer stack -> dense(output) on a
  * selective-retrieval task ("last-pulse hold").
  *
- * The input sequence is small random noise with occasional large "pulses"
- * placed at random, long-gap intervals:
- *
- *     x[t] = pulse_value          if t is a pulse position (|value| >= 1)
- *          = small noise          otherwise                (|value| <  0.2)
- *
- * The target at every position is the value of the MOST RECENT pulse at or
- * before t, held until the next pulse:
- *
- *     yt[t] = value of the latest pulse in x[0..t]   (0 before the first)
- *
- * To produce yt[t] at a noise position, the model must look back to a
- * specific, possibly distant position - the nearest large-magnitude token -
- * and copy its value, ignoring all the noise in between. This is exactly the
- * content-based selective retrieval that attention provides and that a
- * position-wise FFN, a convolution, or an averaging/pooling model cannot do:
- * the answer is neither the current input nor an aggregate of the past, but a
- * single earlier value identified by its content. Long gaps between pulses
- * make the retrieval genuinely long-range, so "attend one or two steps back"
- * does not suffice.
- *
- * Causal attention (lookahead = 0) is used since the relevant pulse is always
- * in the past. The transformer preserves its model dimension, so a dense layer
- * first projects the input up to model_dim and a final dense layer projects
- * back to the single output.
- *
- * Constraints from the model/layer integration:
- *   - model_dim must be an integer multiple of heads,
- *   - the model batch size must be B*T; here one sequence (B=1) of length
- *     T = seq_len, so batch_size == seq_len.
+ * The input is small random noise with occasional large pulses. The target
+ * at each position is the value of the most recent pulse, held until the next
+ * pulse. To solve the task, the transformer must identify pulse tokens by
+ * content, use RoPE positional information to select the latest one, and
+ * retrieve its value while ignoring the intervening noise. Causal attention
+ * is used because the relevant pulse is always in the past.
  */
-int test_transformer_retrieval(int seq_len,
-                               int heads, int model_dim, int ffn_dim,
+
+/* Fills one length-T sequence: X[T][2] (value,bias), yt[T][1] (held pulse). */
+static void gen_sequence(float* X, float* yt, int T)
+{
+    float last = 0;
+    int next = 3 + (int) urand(0,8);
+    for (int t = 0; t < T; t++) {
+        float v;
+        if (t == next) {         /* pulse */
+            float mag = 1 + urand(0,2);
+            float sgn = (urand(0,1) < 0.5) ? -1 : 1;
+            v = sgn * mag;
+            last = v;            /* +/- 1.0 .. 3.0 */
+            next = t + 8 + (int) urand(0,11); /* gap 8 .. 18 */
+        }
+        else {                   /* noise */
+            v = urand(-0.6,0.6); /* +/- 0 .. 0.6 */
+        }
+        X[t * 2 + 0] = v;
+        X[t * 2 + 1] = 1;        /* bias  */
+        yt[t] = last;
+    }
+}
+
+int test_transformer_retrieval(int heads, int model_dim, int ffn_dim,
                                int n_layers, const char* optimizer,
                                float learning_rate, float weight_decay,
                                int epochs)
 {
-    char* title = "last-pulse hold (selective retrieval)";
-    printf("\n\nTrains dense + transformer + dense on a selective-retrieval\n"
-           "task: output the value of the most recent pulse (last-pulse hold)\n\n");
+    char* title = "last-pulse hold (selective retrieval, held-out sequence)";
+    printf("\n\nTrains dense + transformer + dense on\n%s task\n\n",title);
 
-    const int T = seq_len;      /* sequence length                          */
-    const int M = T;            /* rows = B*T with B = 1                    */
+    const int seq_len = 120;   /* sequence length T              */
+    const int num_train = 128;   /* training sequences             */
+    const int num_val = 32;    /* held-out validation sequences  */
+
+    const int T = seq_len;      /* sequence length; model batch size = T    */
     const int L = n_layers + 2; /* proj dense + n transformers + out dense  */
     const int D = 2;            /* input dim: value + bias                  */
     const int N = 1;            /* output dim                               */
 
-    float X[M][D];    /* X[t][0] = signal (noise or pulse), X[t][1] = bias  */
-    float yt[M][N];   /* True labels: value of most recent pulse            */
-    float y[M][N];    /* Output predictions                                 */
-    float xv[M];      /* position index, for plotting                      */
+    /* num_* sequences of length T, laid out sequence by sequence, with
+     * per-sequence lengths all equal to T. Constructed via flat views. */
+    fArr2D xTr = allocmem(num_train * T, D, float);
+    fArr2D yTr = allocmem(num_train * T, N, float);
+    int*   sTr = allocmem(num_train, 1, int);
+    fArr2D xVd = allocmem(num_val * T, D, float);
+    fArr2D yVd = allocmem(num_val * T, N, float);
+    int*   sVd = allocmem(num_val, 1, int);
 
-    /* Generate noise + pulses, and the last-pulse-hold target */
-    float last = 0.0f;                   /* value of most recent pulse       */
-    int   next = 5 + (int) urand(0.0f, 8.0f); /* first pulse position        */
-    int   npulses = 0;
-    for (int t = 0; t < M; t++) {
-        float v;
-        if (t == next) {                 /* place a pulse                    */
-            float mag = 1.0f + urand(0.0f, 2.0f);            /* 1.0 .. 3.0    */
-            float sgn = (urand(0.0f, 1.0f) < 0.5f) ? -1.0f : 1.0f;
-            v = sgn * mag;
-            last = v;
-            npulses++;
-            next = t + 8 + (int) urand(0.0f, 11.0f);         /* gap 8 .. 18   */
-        }
-        else {
-            v = urand(-0.2f, 0.2f);      /* small noise                      */
-        }
-        X[t][0] = v;
-        X[t][1] = 1.0f;
-        yt[t][0] = last;                 /* hold the last pulse value        */
-        xv[t] = (float) t;
+    float* xTrf = (float*) xTr;
+    float* yTrf = (float*) yTr;
+    float* xVdf = (float*) xVd;
+    float* yVdf = (float*) yVd;
+
+    for (int s = 0; s < num_train; s++) {
+        gen_sequence(xTrf + (size_t) s * T * D,yTrf + (size_t) s * T * N,T);
+        sTr[s] = T;
     }
-    printf("%d layers (projection + %d transformer + output), seq length %d, "
-           "%d pulses\n",L,n_layers,T,npulses);
+    for (int s = 0; s < num_val; s++) {
+        gen_sequence(xVdf + (size_t) s * T * D,yVdf + (size_t) s * T * N,T);
+        sVd[s] = T;
+    }
+
+    printf("%d layers (projection + %d transformer + output), seq length %d\n",
+           L,n_layers,T);
     printf("model_dim %d, heads %d, ffn_dim %d\n",model_dim,heads,ffn_dim);
 
-    /* Create model (single batch = one sequence of all T samples) */
-    MODEL* m = model_create(L,M,D,0,0); /* don't add bias, don't normalize */
-    model_add(m,dense_create(model_dim,"none"),"dense");   /* D -> model_dim */
+    /* One sequence per batch: batch size == T, so B = T/T = 1. */
+    MODEL* m = model_create(L,T,D,0,0); /* don't add bias, don't normalize */
+    model_add(m,dense_create(model_dim,"none"),"dense");
     for (int i = 0; i < n_layers; i++)
-        model_add(m,transformer_create(heads,T,model_dim,ffn_dim,
-                                       /*lookahead=*/0),    /* causal        */
-                  "transformer");
-    model_add(m,dense_create(N,"none"),"dense");           /* model_dim -> 1 */
-
+        model_add(m,transformer_create(heads,T,model_dim,ffn_dim,0),
+                                                              "transformer");
+    model_add(m,dense_create(N,"none"),"dense");
     model_compile(m,"mean-square-error",optimizer);
 
-    /* Train model */
+    /* Train, with validation on the held-out sequences */
     float losses[epochs];
     float accuracies[epochs];
+    float v_losses[epochs];
+    float v_accuracies[epochs];
 
-    model_fit(m,X,yt,NULL,M,
-              NULL,NULL,NULL,0,
+    model_fit(m,xTr,yTr,sTr,num_train,
+              xVd,yVd,sVd,num_val,
               epochs,learning_rate,weight_decay,
-              losses,accuracies,NULL,NULL,
-              "shuffle=0 final=1 verbose=1");
+              losses,accuracies,v_losses,v_accuracies,
+              "final=1 verbose=2");
 
-    model_predict(m,X,y,M);
+    float y[T][N];
+    float xv[T];
+    model_predict(m,xVd,(fArr2D) y,T);
+    for (int t = 0; t < T; t++)
+        xv[t] = (float) t;
 
     printf("\n");
 
 #ifdef HAS_PLOT
     {
         #include "../plot/plot.h"
-        plot_graph(xv,(float*)y,(float*)yt,M,
-                   epochs,losses,accuracies,NULL,NULL,title);
+        plot_graph(xv,(float*)y,yVdf,T,
+                   epochs,losses,accuracies,v_losses,v_accuracies,title);
     }
 #else
-    (void) accuracies;
-    (void) losses;
-    (void) title;
+    (void) accuracies; (void) losses;
+    (void) v_accuracies; (void) v_losses; (void) title;
     {
-        int step = (M > 24) ? M / 24 : 1;
+        int step = (T > 24) ? T / 24 : 1;
+        printf("held-out sequence:\n");
         printf("  t    input     target     pred    %s\n","(* = pulse)");
-        for (int t = 0; t < M; t += step) {
-            int is_pulse = (fabsf(X[t][0]) >= 0.5f);
+        for (int t = 0; t < T; t += step) {
+            float in = xVdf[t * D + 0];
+            int is_pulse = (fabsf(in) >= 0.5f);
             printf("%4d  %7.3f  %8.3f  %8.3f   %s\n",
-                   t,X[t][0],yt[t][0],y[t][0],is_pulse ? "*" : "");
+                   t,in,yVdf[t * N + 0],y[t][0],is_pulse ? "*" : "");
         }
     }
     printf("\n");
 #endif
     model_free(m);
+    freemem(xTr); freemem(yTr); freemem(sTr);
+    freemem(xVd); freemem(yVd); freemem(sVd);
     return 0;
 }
 
@@ -844,21 +848,17 @@ int main(int argc, char** argv)
         test_lstm_dense_classification(layers,1,"adamw",6,0.001,0.01,10);
     }
     if (tests[5]) {
-        init_lrng(42);
-
-        init_lrng(42);
-
-        const int seq_len = 120;   /* sequence length T                    */
+        init_lrng(42 * 2);
         const int heads = 4;
-        const int model_dim = 32;  /* must be a multiple of heads          */
-        const int ffn_dim = 128;   /* 4 * model_dim                        */
-        const int n_layers = 2;    /* transformer layers                   */
+        const int model_dim = 32; /* must be a multiple of heads    */
+        const int ffn_dim = 128;  /* 4 * model_dim                  */
+        const int n_layers = 2;   /* transformer layers             */
         const char* optimizer = "adamw";
         const float lr = 0.0005;
         const float wd = 0.01;
-        const int epochs = 1100;
+        const int epochs = 20;
 
-        test_transformer_retrieval(seq_len,heads,model_dim,ffn_dim,
+        test_transformer_retrieval(heads,model_dim,ffn_dim,
                                    n_layers,optimizer,lr,wd,epochs);
     }
     printf("\nAll tests completed\n\n");
