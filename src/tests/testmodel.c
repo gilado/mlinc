@@ -7,6 +7,7 @@
 #include "array.h"
 #include "dense.h"
 #include "lstm.h"
+#include "transformer.h"
 #include "model.h"
 #include "irisfile.h"
 #include "modelio.h"
@@ -656,14 +657,129 @@ int test_lstm_dense_classification(
     return 0;
 }
 
+/* Trains  dense(projection) -> transformer stack -> dense(output)  to predict
+ * the Causal Running Mean of a signal:
+ *
+ *     v[t]  = f(x_t)
+ *     yt[t] = (1/(t+1)) * sum_{i=0..t} v[i]
+ *
+ * This is a pure aggregation-over-the-past task. The dense projection and the
+ * transformer's feed-forward blocks are position-wise and cannot combine
+ * values from different time steps; only the (causal) self-attention can
+ * average over preceding positions. With equal attention scores the softmax
+ * over the t+1 visible keys yields weights of exactly 1/(t+1), i.e. the mean,
+ * so the model can learn this by learning near-uniform causal attention.
+ * A dense- or FFN-only model cannot fit it - which is the point of the test.
+ *
+ * The transformer preserves its model dimension, so a dense layer first
+ * projects the D-dimensional input up to model_dim, and a final dense layer
+ * projects back down to the single output.
+ *
+ * Constraints enforced by the model/layer integration:
+ *   - model_dim must be an integer multiple of heads,
+ *   - the model batch size must be B*T; here one sequence (B=1) of length
+ *     T = number of samples, so batch_size == T.
+ *
+ * range[0] - lowest input (x) value
+ * range[1] - highest input (x) value (exclusive)
+ * range[2] - increment between x values
+ */
+int test_transformer_regression(const float range[3],
+                                int heads, int model_dim, int ffn_dim,
+                                int n_layers, const char* optimizer,
+                                float learning_rate, float weight_decay,
+                                int epochs)
+{
+    #undef f
+    #define f(x) (sin(x) + 0.4 * sin(1.6 + 1.5 * (x)))
+    char* title = "causal running mean of sin(x)+0.4 sin(1.6+1.5x)";
+    printf("\n\nTrains dense + transformer + dense to predict the\n"
+           "causal running mean of  f(x) = sin(x) + 0.4 sin(1.6 + 1.5x)\n\n");
+
+    const int T = (int) ((range[1] - range[0]) / range[2] + 0.5); /* seq len */
+    const int M = T;            /* rows = B*T with B = 1                     */
+    const int L = n_layers + 2; /* proj dense + n transformers + out dense   */
+    const int D = 2;            /* input dim: value + bias                   */
+    const int N = 1;            /* output dim                                */
+    printf("%d layers (projection + %d transformer + output), seq length %d\n",
+           L,n_layers,T);
+    printf("model_dim %d, heads %d, ffn_dim %d\n",model_dim,heads,ffn_dim);
+
+    float X[M][D];    /* X[t][0] = v[t] = f(x_t), X[t][1] = bias = 1.0       */
+    float yt[M][N];   /* True labels: causal running mean of v               */
+    float y[M][N];    /* Output predictions                                  */
+    float xv[M];      /* x values, for plotting                              */
+
+    /* Initialize data */
+    float x = range[0];
+    float sum = 0;
+    for (int t = 0; t < M; t++) {
+        float v = f(x);
+        X[t][0] = v;
+        X[t][1] = 1.0;
+        sum += v;
+        yt[t][0] = sum / (t + 1);   /* causal running mean */
+        xv[t] = x;
+        x += range[2];
+    }
+
+    /* Create model (single batch = one sequence of all T samples) */
+    MODEL* m = model_create(L,M,D,0,0); /* don't add bias, don't normalize */
+    model_add(m,dense_create(model_dim,"none"),"dense");   /* D -> model_dim */
+    for (int i = 0; i < n_layers; i++)
+        model_add(m,transformer_create(heads,T,model_dim,ffn_dim,
+                                       /*lookahead=*/0),    /* causal        */
+                  "transformer");
+    model_add(m,dense_create(N,"none"),"dense");           /* model_dim -> 1 */
+
+    model_compile(m,"mean-square-error",optimizer);
+
+    /* Train model */
+    float losses[epochs];
+    float accuracies[epochs];
+
+    model_fit(m,X,yt,NULL,M,
+              NULL,NULL,NULL,0,
+              epochs,learning_rate,weight_decay,
+              losses,accuracies,NULL,NULL,
+              "shuffle=0 final=1 verbose=1");
+
+    model_predict(m,X,y,M);
+
+    printf("\n");
+
+#ifdef HAS_PLOT
+    {
+        #include "../plot/plot.h"
+        /* Prediction vs. truth over x, plus the loss and accuracy curves. */
+        plot_graph(xv,(float*)y,(float*)yt,M,
+                   epochs,losses,accuracies,NULL,NULL,title);
+    }
+#else
+    (void) accuracies;
+    (void) losses;
+    (void) title;
+    {
+        int step = (M > 20) ? M / 20 : 1;
+        printf("   x      input v    target     pred\n");
+        for (int t = 0; t < M; t += step)
+            printf("%7.2f  %8.3f  %8.3f  %8.3f\n",
+                   xv[t],X[t][0],yt[t][0],y[t][0]);
+    }
+    printf("\n");
+#endif
+    model_free(m);
+    return 0;
+}
+
 int main(int argc, char** argv)
 {
     const char* usage = 
         "Usage: testmodel [-h | <test number>...]           \n"
         "for example 'testmodel 1 3' will runs tests 1 and 3\n"
-        "test numbers are 1..5 and are seperated by spaces  \n"
+        "test numbers are 1..6 and are seperated by spaces  \n"
         "runs all tests if none specified                   \n";
-    int tests[5] = {0};
+    int tests[6] = {0};
     
     if (argc > 1) {
         for (int i = 1; i < argc; i++) {
@@ -711,7 +827,23 @@ int main(int argc, char** argv)
         const int layers[1] = {80};
         test_lstm_dense_classification(layers,1,"adamw",6,0.001,0.01,10);
     }
+    if (tests[5]) {
+        init_lrng(42);
+
+        /* range gives T = 200 time steps (x from -10 to 10 step 0.1) */
+        const float range[3] = { -10.0, 10.0, 0.1 };
+        const int heads = 4;
+        const int model_dim = 32; /* must be a multiple of heads */
+        const int ffn_dim = 128;  /* 4 * model_dim               */
+        const int n_layers = 2;   /* transformer layers          */
+        const char* optimizer = "adamw";
+        const float lr = 0.0005;
+        const float wd = 0.01;
+        const int epochs = 1000;
+
+        test_transformer_regression(range,heads,model_dim,ffn_dim,
+                                    n_layers,optimizer,lr,wd,epochs);
+    }
     printf("\nAll tests completed\n\n");
     return 0;
 }
-

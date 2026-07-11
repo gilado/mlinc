@@ -7,18 +7,7 @@
 #include "loss.h"
 #include "ctc.h"
 #include "adamw.h"
-#include "dense.h"
-#include "lstm.h"
-
-typedef struct layer_s {
-    char type;      /* (d)ense or (l)stm */
-    union {
-        DENSE* dense;
-        LSTM* lstm;
-    };
-    fArr2D* grads;  /* Array of gradients and adam momentums    */
-    int num_grads;  /* Number of entries in grads[]             */
-} LAYER;
+#include "layer.h"
 
 typedef struct model_s {
     int num_layers; /* Number of layers                           */
@@ -62,7 +51,7 @@ void model_free(MODEL* m);
 /* Adds a layer to a model
  * m points to a model
  * layer points to a neural network (e.g. DENSE) to be added as a layer
- * type is the type of the layer: "dense" or "lstm"
+ * type is the type of the layer: "dense", "lstm" or "transformer"
  * 
  * The layer is added after all other layers in the model
  */

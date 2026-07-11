@@ -12,6 +12,7 @@
 #include "adamw.h"
 #include "dense.h"
 #include "lstm.h"
+#include "layer.h"
 #include "clip.h"
 #include "batch.h"
 #include "normalize.h"
@@ -31,13 +32,8 @@ static void get_epoch_params(const char* sch, int epoch, float* lr, float* wd);
 
 static inline void reset_state(MODEL* m)
 {
-    for (int i = 0; i < m->num_layers; i++) {
-        LAYER* l = &m->layer[i];
-        switch(l->type) {
-            case 'd': dense_reset(l->dense); break;
-            case 'l': lstm_reset(l->lstm); break;
-        }
-    }
+    for (int i = 0; i < m->num_layers; i++)
+        layer_reset(&m->layer[i]);
 }
 
 /* Creates a container for multi layer neural network.
@@ -74,10 +70,7 @@ MODEL* model_create(int num_layers,
 void model_free(MODEL* m)
 {
     for (int i = 0; i < m->num_layers; i++) {
-        switch(m->layer[i].type) {
-            case 'd': dense_free(m->layer[i].dense); break;
-            case 'l': lstm_free(m->layer[i].lstm); break;
-        }
+        layer_free(&m->layer[i]);
         if (m->layer[i].grads) {
             for (int j = 0; j < m->layer[i].num_grads; j++)
                 freemem(m->layer[i].grads[j]);
@@ -94,7 +87,7 @@ void model_free(MODEL* m)
 /* Adds a layer to a model
  * m points to a model
  * layer points to a neural network (e.g. DENSE) to be added as a layer
- * type is the type of the layer: "dense" or "lstm"
+ * type is the type of the layer: "dense", "lstm" or "transformer"
  *
  * The layer is added after all other layers in the model
  */
@@ -116,6 +109,10 @@ void model_add(MODEL* m, void* layer, const char* type)
     if (!strcasecmp("lstm",type)) {
         m->layer[i].type = 'l';
         m->layer[i].lstm = layer;
+    }
+    if (!strcasecmp("transformer",type)) {
+        m->layer[i].type = 't';
+        m->layer[i].transformer = layer;
     }
     if (m->layer[i].type == 0) {
         fflush(stdout);
@@ -166,74 +163,18 @@ void model_compile(MODEL* m, const char* loss_func, const char* optimizer)
     int D = m->input_dim + m->add_bias;
     int B = m->batch_size;
     int L = m->num_layers;
-    LAYER* l;
     for (int i = 0; i < L; i++) {
-        l = &m->layer[i];
-        switch(l->type) {
-            case 'd': dense_init(l->dense,D,B); D = l->dense->S; break;
-            case 'l': lstm_init(l->lstm,D,B); D = l->lstm->S; break;
-        }
-        /* Note D == output size of this layer, used as input size of next */
+        /* layer_init returns the layer's output size, which is the
+         * input size of the next layer. */
+        D = layer_init(&m->layer[i],D,B);
     }
-    l = &m->layer[L - 1];
-    switch(l->type) {
-        case 'd': m->output_dim = l->dense->S; break;
-        case 'l': m->output_dim = l->lstm->S; break;
-    }
+    m->output_dim = layer_output_dim(&m->layer[L - 1]);
     if (m->loss_func == 'C')
         m->ctc = ctc_create(B,m->output_dim,0);
 
     /* Allocate gradient arrays */
-    for (int i = 0; i < m->num_layers; i++) {
-        switch (m->layer[i].type) {
-            case 'd': {
-                DENSE* l = m->layer[i].dense;
-                int D = l->D;
-                int S = l->S;
-                int ng = 0; /* Number of gradient related arrays   */
-                switch(m->optimizer) {
-                    case 'l': ng = 1; break; /* gWx[D][S] */
-                    case 'a': ng = 3; break; /* gWx[D][S] mWx[D][S] vWx[D][S] */
-                }
-                /* grads is an array of pointers to arrays */
-                fArr2D* g = allocmem(1,ng,fArr2D*);
-                for (int j = 0; j < ng; j++)
-                    g[j] = allocmem(D,S,float);
-                m->layer[i].grads = g;
-                m->layer[i].num_grads = ng;
-            }
-            break;
-            case 'l': {
-                LSTM* l = m->layer[i].lstm;
-                int D = l->D;
-                int S = l->S;
-                int ng = 0; /* Number of gradient related arrays   */
-                switch (m->optimizer) {
-                    case 'l':
-                        /* gWf[D][S] gWi[D][S] gWc[D][S] gWo[D][S] */
-                        /* gUf[S][S] gUi[S][S] gUc[S][S] gUo[S][S] */
-                        ng = 8;
-                    break;
-                    case 'a': /* adam optimizer */
-                        /* gWf[D][S] gWi[D][S] gWc[D][S] gWo[D][S] */
-                        /* gUf[S][S] gUi[S][S] gUc[S][S] gUo[S][S] */
-                        /* mWf[D][S] mWi[D][S] mWc[D][S] mWo[D][S] */
-                        /* mUf[S][S] mUi[S][S] mUc[S][S] mUo[S][S] */
-                        /* vWf[D][S] vWi[D][S] vWc[D][S] vWo[D][S] */
-                        /* vUf[S][S] vUi[S][S] vUc[S][S] vUo[S][S] */
-                        ng = 24;
-                    break;
-                }
-                /* grads is an array of pointers to arrays */
-                fArr2D* g = allocmem(1,ng,fArr2D*);
-                for (int j = 0; j < ng; j++)
-                    g[j] = allocmem(((j / 4) % 2) ? S : D,S,float);
-                m->layer[i].grads = g;
-                m->layer[i].num_grads = ng;
-            }
-            break;
-        }
-    }
+    for (int i = 0; i < m->num_layers; i++)
+        layer_alloc_grads(&m->layer[i],m->optimizer);
 }
 
 /* Sets a new batch size.
@@ -250,13 +191,8 @@ void model_set_batch_size(MODEL* m, int batch_size)
     if (m->batch_size == batch_size)
         return;
     m->batch_size = batch_size;
-    for (int i = 0; i < m->num_layers; i++) {
-        LAYER* l = &m->layer[i];
-        switch(l->type) {
-            case 'd': dense_set_batch_size(l->dense,batch_size); break;
-            case 'l': lstm_set_batch_size(l->lstm,batch_size); break;
-        }
-    }
+    for (int i = 0; i < m->num_layers; i++)
+        layer_set_batch_size(&m->layer[i],batch_size);
     if (m->ctc != NULL) {
         ctc_free(m->ctc);
         m->ctc = ctc_create(m->batch_size,m->output_dim,0);
@@ -385,17 +321,9 @@ void model_fit(MODEL* m,
         bVd = batch_create(xVd,D,yVd,N,B,lenVd,numVd,0,m->add_bias);
         
     fArr2D dy[L];  /* Gradients with respect to the inputs          */
-    for (int i = 0; i < L; i++) {
-        LAYER l = m->layer[i];
-        switch (l.type) {
-            case 'd':
-                dy[i] = allocmem(l.dense->B,l.dense->S,float);
-            break;
-            case 'l':
-                dy[i] = allocmem(l.lstm->B,l.lstm->S,float);
-            break;
-        }
-    }
+    for (int i = 0; i < L; i++)
+        dy[i] = allocmem(layer_batch_size(&m->layer[i]),
+                         layer_output_dim(&m->layer[i]),float);
     
     /* Allocate memory for one batch */
     typedef float (*ArrBDb)[Db];
@@ -602,26 +530,7 @@ void model_predict(MODEL* m, const fArr2D x_, fArr2D y_, int len)
             break;
         if (m->normalize)
             normalize(xb,B,Db,mean,sdev,1); 
-        LAYER l = m->layer[0]; 
-        switch(l.type) {
-            case 'd': 
-                yp[0] = dense_forward(l.dense,xb,0);
-            break;
-            case 'l': 
-                yp[0] = lstm_forward(l.lstm,xb,0);
-            break;
-        }
-        for (int j = 1; j < L; j++) {
-            LAYER l = m->layer[j]; 
-            switch(l.type) {
-                case 'd': 
-                    yp[j] = dense_forward(l.dense,yp[j - 1],j);
-                break;
-                case 'l': 
-                    yp[j] = lstm_forward(l.lstm,yp[j - 1],j);
-                break;
-            }
-        }
+        model_batch_forward(m,xb,yp);
         fltcpy(y,yp[L - 1],cnt * N);
         y += cnt;
     }
@@ -632,126 +541,26 @@ void model_predict(MODEL* m, const fArr2D x_, fArr2D y_, int len)
 static void model_batch_forward(MODEL* m, fArr2D x, fArr2D* yp)
 {
     int L = m->num_layers;
-    LAYER l = m->layer[0]; 
-    switch(l.type) {
-        case 'd': 
-            yp[0] = dense_forward(l.dense,x,0);
-        break;
-        case 'l': 
-            yp[0] = lstm_forward(l.lstm,x,0);
-        break;
-    }
-    for (int j = 1; j < L; j++) {
-        LAYER l = m->layer[j]; 
-        switch(l.type) {
-            case 'd': 
-                yp[j] = dense_forward(l.dense,yp[j - 1],j);
-            break;
-            case 'l': 
-                yp[j] = lstm_forward(l.lstm,yp[j - 1],j);
-            break;
-        }
-    }
+    yp[0] = layer_forward(&m->layer[0],x,0);
+    for (int j = 1; j < L; j++)
+        yp[j] = layer_forward(&m->layer[j],yp[j - 1],j);
 }
 
 static void model_batch_backward(MODEL* m, fArr2D x, fArr2D* dy, fArr2D* yp)
 {
     int L = m->num_layers;
-    for (int j = L - 1; j > 0; j--) {
-        LAYER l = m->layer[j];
-        switch(l.type) {
-            case 'd':
-                dense_backward(l.dense,dy[j],yp[j - 1],l.grads[0],dy[j - 1],j);
-            break;
-            case 'l':
-                lstm_backward(l.lstm,dy[j],yp[j - 1],l.grads,dy[j - 1],j);
-            break;
-        }
-    }
-    LAYER l = m->layer[0];
-    switch(l.type) {
-        case 'd':
-            dense_backward(l.dense,dy[0],x,l.grads[0],NULL,0);
-        break;
-        case 'l':
-            lstm_backward(l.lstm,dy[0],x,l.grads,NULL,0);
-        break;
-    }
-}
-
-/* Updates all weights in array w[M][N], according to the corresponding 
- * gradients in g[M][N], using linear update.
- * The rate of update is controlled by learning_rate, weight_decay.
- */
-static void linear_update(fArr2D w_/*[M][N]*/,fArr2D g_/*[M][N]*/,
-                          int M, int N, 
-                          float learning_rate, float weight_decay)
-{
-    typedef float (*ArrMN)[N];
-    ArrMN w = (ArrMN) w_;
-    ArrMN g = (ArrMN) g_;
-
-    clip_gradients(g,M,N,1.0e-12,10.0);
-
-    for (int i = 0; i < M; i++)
-        for (int j = 0; j < N; j++)
-            w[i][j] -= learning_rate * (g[i][j] + weight_decay * w[i][j]);
+    for (int j = L - 1; j > 0; j--)
+        layer_backward(&m->layer[j],dy[j],yp[j - 1],dy[j - 1],j);
+    layer_backward(&m->layer[0],dy[0],x,NULL,0);
 }
 
 /* Updates model weights */
 static void model_update(MODEL* m, float learning_rate, float weight_decay)
 {
-    float lr = learning_rate;
-    float wd = weight_decay;
     int uc = ++m->update_cnt;
-    for (int j = 0; j < m->num_layers; j++) {
-        LAYER l = m->layer[j];
-        fArr2D* g = l.grads;
-        switch(l.type) {
-            case 'd': { /* dense */
-                DENSE* ld = l.dense;
-                int D = ld->D; 
-                int S = ld->S; 
-                switch(m->optimizer) {
-                    case 'l': /* linear */
-                        linear_update(ld->Wx,g[0],D,S,lr,wd);
-                    break;            
-                    case 'a': /* adamw */
-                        adamw_update(ld->Wx,g[0],g[1],g[2],D,S,lr,wd,uc);
-                    break; 
-                }
-            }
-            break;
-            case 'l': { /* lstm */
-                LSTM* ll = l.lstm;
-                int D = ll->D; 
-                int S = ll->S; 
-                switch(m->optimizer) {
-                    case 'l': /* linear */
-                        linear_update(ll->Wf,g[0],D,S,lr,wd);
-                        linear_update(ll->Wi,g[1],D,S,lr,wd);
-                        linear_update(ll->Wc,g[2],D,S,lr,wd);
-                        linear_update(ll->Wo,g[3],D,S,lr,wd);
-                        linear_update(ll->Uf,g[4],S,S,lr,wd);
-                        linear_update(ll->Ui,g[5],S,S,lr,wd);
-                        linear_update(ll->Uc,g[6],S,S,lr,wd);
-                        linear_update(ll->Uo,g[7],S,S,lr,wd);
-                    break;            
-                    case 'a': /* adamw */
-                        adamw_update(ll->Wf,g[0],g[0+8],g[0+16],D,S,lr,wd,uc);
-                        adamw_update(ll->Wi,g[1],g[1+8],g[1+16],D,S,lr,wd,uc);
-                        adamw_update(ll->Wc,g[2],g[2+8],g[2+16],D,S,lr,wd,uc);
-                        adamw_update(ll->Wo,g[3],g[3+8],g[3+16],D,S,lr,wd,uc);
-                        adamw_update(ll->Uf,g[4],g[4+8],g[4+16],S,S,lr,wd,uc);
-                        adamw_update(ll->Ui,g[5],g[5+8],g[5+16],S,S,lr,wd,uc);
-                        adamw_update(ll->Uc,g[6],g[6+8],g[6+16],S,S,lr,wd,uc);
-                        adamw_update(ll->Uo,g[7],g[7+8],g[7+16],S,S,lr,wd,uc);
-                    break; 
-                }
-            }
-            break;
-        }
-    }
+    for (int j = 0; j < m->num_layers; j++)
+        layer_update(&m->layer[j],m->optimizer,
+                     learning_rate,weight_decay,uc);
 }
 
 /* Prints a text line with model training progress information. 
