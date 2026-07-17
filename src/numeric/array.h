@@ -44,8 +44,8 @@ static inline void matmul(fArr2D restrict r_/*[N][M]*/,
     typedef float (*ArrdM)[M]; const ArrdM y = (const ArrdM) y_;
     fltclr(r,N * M);
     for (int i = 0; i < N; i++)
-        for (int j = 0; j < M; j++)
-            for (int k = 0; k < d; k++)
+        for (int k = 0; k < d; k++)
+            for (int j = 0; j < M; j++)
                 r[i][j] += x[i][k] * y[k][j];
 }
 
@@ -108,9 +108,9 @@ static inline void Tmatmul(fArr2D restrict r_/*[N][M]*/,
     typedef float (*ArrdN)[N]; const ArrdN x = (const ArrdN) x_;
     typedef float (*ArrdM)[M]; const ArrdM y = (const ArrdM) y_;
     fltclr(r,N * M);
-    for (int i = 0; i < N; i++)
-        for (int j = 0; j < M; j++)
-            for (int k = 0; k < d; k++)
+    for (int k = 0; k < d; k++)
+        for (int i = 0; i < N; i++)
+            for (int j = 0; j < M; j++)
                 r[i][j] += x[k][i] * y[k][j];
 }
 
@@ -157,8 +157,8 @@ static inline void addinnermul(fVec restrict v_/*[N]*/,
     const VecM w = (const VecM) w_;
     const ArrNM m = (const ArrNM)  m_;
 
-    for (int i = 0; i < M; i++)
-        for (int j = 0; j < N; j++)
+    for (int j = 0; j < N; j++)
+        for (int i = 0; i < M; i++)
             v[j] += w[i] * m[j][i];
 }
 
