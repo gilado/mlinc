@@ -779,7 +779,7 @@ int test_transformer_retrieval(int heads, int model_dim, int ffn_dim,
         printf("  t    input     target     pred    %s\n","(* = pulse)");
         for (int t = 0; t < T; t += step) {
             float in = xVdf[t * D + 0];
-            int is_pulse = (fabsf(in) >= 0.5f);
+            int is_pulse = (fabsf(in) >= 0.8);
             printf("%4d  %7.3f  %8.3f  %8.3f   %s\n",
                    t,in,yVdf[t * N + 0],y[t][0],is_pulse ? "*" : "");
         }

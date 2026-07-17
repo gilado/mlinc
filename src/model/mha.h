@@ -23,12 +23,9 @@ typedef struct {
     int BT;     /* B * T */
     int BHT;    /* B * H * T */
 
-    int   lookahead;     /* causal masking, set at create time:
-                          *   < 0  bidirectional (no masking)
-                          *   = 0  strictly causal
-                          *   = L  causal with L frames of future context */
-    int   training;      /* 1 if training, 0 if inference */
-    float dropout_rate;  /* fraction of attention weights to zero out */
+    int lookahead;      /* causal masking, set at create time below  */
+    int training;       /* 1 if training, 0 if inference             */
+    float dropout_rate; /* fraction of attention weights to zero out */
 
     fArr2D Wq;  /* [D][D] */
     fArr2D Wk;  /* [D][D] */
