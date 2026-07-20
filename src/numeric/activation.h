@@ -4,6 +4,14 @@
 #define ACTIVATION_H
 #include "array.h"
 
+/* Applies the sigmoid activation to a single value (clamped) */
+static inline float sigmoid1(float x)
+{
+    if (x >= 87.33) return 1;
+    if (x < -87.33) return 0;
+    return 1.0 / (1.0 + expf(-x));
+}
+
 /* Applies the sigmoid activation function to each element of a 2D array
  *
  * Parameters:
@@ -18,7 +26,7 @@ static inline void sigmoid(fArr2D m_/*[B][S]*/, int B, int S)
 
     for (int i = 0; i < B; i++)
         for (int j = 0; j < S; j++)
-            m[i][j] = 1.0 / (1.0 + exp(-m[i][j]));
+            m[i][j] = sigmoid1(m[i][j]);
 }
 
 /* Applies the rectified linear unit (ReLU) activation function to each
@@ -117,7 +125,7 @@ static inline void softmax(fArr2D a_/*[B][K]*/, int B, int K)
  * However the value passed to this function is z = sigmoid(x)
  * sigmoid(x) * (1 - sigmoid(x)) => z * (1 - z)
  */
-static inline float d_sigmoid_1(float z)
+static inline float d_sigmoid1(float z)
 {
     return z * (1 - z);
 }
@@ -142,7 +150,7 @@ static inline void d_sigmoid(fArr2D x_/*[B][D]*/,
 
     for (int i = 0; i < B; i++)
         for (int j = 0; j < D; j++)
-            x[i][j] *= d_sigmoid_1(z[i][j]);
+            x[i][j] *= d_sigmoid1(z[i][j]);
 }
 
 /* Calculates the derivative of the ReLU function at point z.

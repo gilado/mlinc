@@ -23,7 +23,9 @@
 #include "array.h"
 #include "hash.h"
 #include "newsfile.h"
+#include "activation.h"
 #include "embedding.h"
+#include "negsample.h"
 
 const char* usage =
 "Usage: word2vec [options]\n"
@@ -122,114 +124,7 @@ float* word_embedding(EMBEDDING* embd, int wrdinx)
     return Wx[wrdinx];
 }
 
-/* Creates and initializes output weight matrix for negative sampling */
-fArr2D create_output_weights(int vocab_size, int embedding_dim)
-{
-    typedef float (*ArrDE)[embedding_dim];
-    ArrDE Wo = allocmem(vocab_size,embedding_dim,float);
-    float scale = 1 / sqrtf(embedding_dim);
-    for (int i = 0; i < vocab_size ; i++) {
-        for (int j = 0; j < embedding_dim; j++) {
-            float val = nrand(0.0,scale);
-            while (fabsf(val) >= 2 * scale)
-                val = nrand(0.0,scale);
-            Wo[i][j] = val;
-        }
-    }
-    return Wo;
-}
 
-/* Applies the sigmoid activation function to a single value.
- */
-static inline float sigmoid1(float x)
-{
-    if (x > 100) return 1;
-    if (x < -100) return 0;
-    return 1.0 / (1.0 + expf(-x));
-}
-
-float negative_sampling_loss(
-    fArr2D h_,          /* [B][E] context embeddings                */
-    fArr2D labels,      /* [B][1] target word indices               */
-    fArr2D gEmb_,       /* [B][E] gradients w.r.t. input embeddings */
-    fArr2D Wo_,         /* [D][E] output weights                    */
-    fArr2D gWo_,        /* [D][E] gradients w.r.t. output weights   */
-    int B,              /* batch size          */
-    int E,              /* embedding dimension */
-    int D,              /* vocab size          */
-    int* dist_table,    /* unigram table for negative sampling       */
-    int dist_table_size,
-    int nsamples,       /* number of negative samples                */
-    int* touched,       /* out: distinct gWo rows updated this batch */
-                        /*      buffer size >= B * (nsamples + 1)    */
-    int* ntouched       /* out: number of distinct rows in touched[] */
-)
-{
-    typedef float (*ArrBE)[E];
-    typedef float (*ArrDE)[E];
-
-    ArrBE h = (ArrBE) h_;
-    ArrBE gEmb = (ArrBE) gEmb_;
-    ArrDE Wo = (ArrDE) Wo_;
-    ArrDE gWo = (ArrDE) gWo_;
-
-    float loss = 0;
-    int nt = 0; /* Number of distinct gWo rows touched this batch */
-
-    fltclr(gEmb, B * E);
-    /* gWo array is large, scales with vocabulary size: each row is zeroed
-     * on first use via prep_row(), proportionally to rows actually touched.
-     */
-    for (int i = 0; i < B; i++) {
-        int target = (int) ((float *)labels)[i];
-        if (target <= 0 || target >= D)
-            continue;
-        float dot, p, grad;
-
-        /* Positive sample dot product */
-        dot = 0;
-        for (int j = 0; j < E; j++)
-            dot += Wo[target][j] * h[i][j];
-
-        p = sigmoid1(dot);
-        loss -= logf(p + 1e-8);
-        grad = p - 1.0;
-
-        /* Gradient updates for positive sample */
-        prep_row(gWo_,E,target,touched,&nt);
-        for (int j = 0; j < E; j++) {
-            gWo[target][j] += grad * h[i][j];
-            gEmb[i][j]   += grad * Wo[target][j];
-        }
-
-        /* Negative samples */
-        for (int k = 0; k < nsamples;) {
-            int inx = (int)urand(0,dist_table_size);
-            int neg = dist_table[inx];
-            if (neg == target)
-                continue;
-
-            /* Negative sample dot product */
-            dot = 0;
-            for (int j = 0; j < E; j++)
-                dot += Wo[neg][j] * h[i][j];
-
-            p = sigmoid1(-dot);
-            loss -= logf(p + 1e-8);
-            grad = 1.0 - p;
-
-            /* Gradient updates for negative samples */
-            prep_row(gWo_,E,neg,touched,&nt);
-            for (int j = 0; j < E; j++) {
-                gWo[neg][j] += grad * h[i][j];
-                gEmb[i][j] += grad * Wo[neg][j];
-            }
-            k++;
-        }
-    }
-    *ntouched = nt;
-    return loss;
-}
 
 /* Compare two word frequency values - used with qsort to order
  * words based on their frequency in descending order,
@@ -465,18 +360,17 @@ int main(int argc, char** argv)
     /* Create and initialize layers */
     EMBEDDING* embedding = embedding_create(embedding_dim,cxt_size,0);
     embedding_init(embedding,vocab_size,batch_size);
-    /* Negative sampling only uses an output weights matrix */
-    fArr2D Wo = create_output_weights(vocab_size,embedding_dim);
+    NEGSAMPLE* output = negsample_create(vocab_size,neg_samples);
+    negsample_init(output,embedding_dim,batch_size);
+    negsample_set_dist(output,dist_table,dist_table_size);
 
     /* Allocate memory for gradients */
     fArr2D dy;  /* Gradients with respect to the input  */
     dy = allocmem(embedding->B,embedding->E,float);
-    fArr2D gWx[2]; /* Gradients with respect to the weights */
+    fArr2D gWx[2]; /* Gradients: [0] input embeddings, [1] output weights */
     gWx[0] = allocmem(embedding->D,embedding->E,float);
     gWx[1] = allocmem(vocab_size,embedding_dim,float);
 
-    /* Rows of Wo (output weights) touched by negative sampling in one batch */
-    int* touched = allocmem(batch_size * (neg_samples + 1),1,int);
     /* Rows of Wx (input embeddings) touched per batch: at most B context words */
     int* touched_in = allocmem(batch_size * cxt_size,1,int);
 
@@ -540,12 +434,8 @@ int main(int argc, char** argv)
                 /* Forward pass */
                 fArr2D yp = embedding_forward(embedding,contexts,0);
 
-                int ntouched = 0;
-                loss += negative_sampling_loss(
-                                    yp,labels,dy,Wo,gWx[1],
-                                    batch_size,embedding_dim,vocab_size,
-                                    dist_table,dist_table_size,neg_samples,
-                                    touched,&ntouched);
+                loss += negsample_loss(output,yp,labels,gWx[1],dy,
+                                       batch_size,NULL);
 
                 /* backward pass */
                 int ntouched_in = 0;
@@ -557,7 +447,7 @@ int main(int argc, char** argv)
                  */
                 update(embedding->Wx,gWx[0],touched_in,ntouched_in,
                                                    embedding->E,learning_rate);
-                update(Wo,gWx[1],touched,ntouched,embedding_dim,learning_rate);
+                negsample_update(output,gWx[1],learning_rate,0.0f);
 
                 word_cnt += wcnt;
                 int pct = (tot_file_cnt >= 1) ?
@@ -605,11 +495,10 @@ int main(int argc, char** argv)
     printf("\n");
     hashmap_free(hmap);
     embedding_free(embedding);
-    freemem(Wo);
+    negsample_free(output);
     freemem(dy);
     freemem(gWx[0]);
     freemem(gWx[1]);
-    freemem(touched);
     freemem(touched_in);
     freemem(dist_table);
     freemem(word_freq);

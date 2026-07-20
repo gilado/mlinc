@@ -16,7 +16,8 @@ typedef struct model_s {
     int input_dim;  /* Input vectors dimension (may include bias) */
     int add_bias;   /* Either 1 (add) or 0 (do not add)           */ 
     int output_dim; /* Output vectors dimension (last layer size) */
-    char loss_func; /* (m)ean-square-root (c)ross-entropy (C)tc   */
+    int target_dim; /* == output_dim, or 1 for (n)egsample        */
+    char loss_func; /* (m)se (c)ross-entropy (C)tc (N)egative-sampling */
     CTC* ctc;       /* For ctc loss                               */
     char optimizer; /* (l)inear (a)damw                           */
     int update_cnt; /* For adamw optimizer                        */

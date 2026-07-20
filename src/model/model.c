@@ -12,7 +12,10 @@
 #include "adamw.h"
 #include "dense.h"
 #include "lstm.h"
+#include "transformer.h"
+#include "negsample.h"
 #include "layer.h"
+#include "activation.h"
 #include "clip.h"
 #include "batch.h"
 #include "normalize.h"
@@ -87,7 +90,7 @@ void model_free(MODEL* m)
 /* Adds a layer to a model
  * m points to a model
  * layer points to a neural network (e.g. DENSE) to be added as a layer
- * type is the type of the layer: "dense", "lstm" or "transformer"
+ * type is the type of the layer: "dense", "lstm", "transformer" or "negsample"
  *
  * The layer is added after all other layers in the model
  */
@@ -114,6 +117,10 @@ void model_add(MODEL* m, void* layer, const char* type)
         m->layer[i].type = 't';
         m->layer[i].transformer = layer;
     }
+    if (!strcasecmp("negsample",type)) {
+        m->layer[i].type = 'n';
+        m->layer[i].negsample = layer;
+    }
     if (m->layer[i].type == 0) {
         fflush(stdout);
         fprintf(stderr,"model_create: invalid layer type '%s'\n",type);
@@ -135,6 +142,7 @@ void model_compile(MODEL* m, const char* loss_func, const char* optimizer)
     if (!strcasecmp("mean-square-error",loss_func)) m->loss_func = 'm';
     if (!strcasecmp("cross-entropy",loss_func)) m->loss_func = 'c';
     if (!strcasecmp("ctc",loss_func)) m->loss_func = 'C';
+    if (!strcasecmp("negative-sampling",loss_func)) m->loss_func = 'N';
     if (m->loss_func == 0) {
         fflush(stdout);
         fprintf(stderr,"model_create: invalid loss function '%s'\n",loss_func);
@@ -169,6 +177,10 @@ void model_compile(MODEL* m, const char* loss_func, const char* optimizer)
         D = layer_init(&m->layer[i],D,B);
     }
     m->output_dim = layer_output_dim(&m->layer[L - 1]);
+    /* Negative-sampling targets are a single word index per row;
+     * all other losses use dense targets of the model's output width.
+     */
+    m->target_dim = (m->loss_func == 'N') ? 1 : m->output_dim;
     if (m->loss_func == 'C')
         m->ctc = ctc_create(B,m->output_dim,0);
 
@@ -288,6 +300,7 @@ void model_fit(MODEL* m,
     const char* sch = find_kwarg(kwargs,"schedule");
     int L = m->num_layers;
     int N = m->output_dim;          /* Dimension of model output vectors */
+    int Nt = m->target_dim;         /* Target width (1 for negsample)    */
     int B = m->batch_size;          /* Batch size (all layers)           */
     int D = m->input_dim;           /* Input dimension: may include bias */
     int Dx = D - (1 - m->add_bias); /* Input dimension excluding bias    */
@@ -315,10 +328,10 @@ void model_fit(MODEL* m,
     if (m->normalize)
         calculate_mean_sdev(xTr,MTr,D,mean,sdev,D - Dx);
 
-    BATCH* bTr = batch_create(xTr,D,yTr,N,B,lenTr,numTr,shuffle,m->add_bias);
+    BATCH* bTr = batch_create(xTr,D,yTr,Nt,B,lenTr,numTr,shuffle,m->add_bias);
     BATCH* bVd = NULL;
     if (MVd > 0) /* Notice validation data not shuffled */
-        bVd = batch_create(xVd,D,yVd,N,B,lenVd,numVd,0,m->add_bias);
+        bVd = batch_create(xVd,D,yVd,Nt,B,lenVd,numVd,0,m->add_bias);
         
     fArr2D dy[L];  /* Gradients with respect to the inputs          */
     for (int i = 0; i < L; i++)
@@ -327,9 +340,9 @@ void model_fit(MODEL* m,
     
     /* Allocate memory for one batch */
     typedef float (*ArrBDb)[Db];
-    typedef float (*ArrBN)[N];
+    typedef float (*ArrBN)[Nt];
     ArrBDb x = (ArrBDb) allocmem(B,Db,float); /* Array of samples      */
-    ArrBN yt = (ArrBN) allocmem(B,N,float);   /* Array of true outputs */
+    ArrBN yt = (ArrBN) allocmem(B,Nt,float);  /* Array of true outputs */
 
     /* Track training loss, accuracy and model improvement across epochs */
     float loss = 0;
@@ -389,6 +402,21 @@ void model_fit(MODEL* m,
                     match_cnt += ctc_accuracy(m->ctc,yp[L - 1],yt,cnt,N);
                     dLdy_ctc_loss(m->ctc,yp[L - 1],yt,dy[L - 1],cnt,N);
                 break;
+                case 'N': {
+                    /* Negative-sampling : loss and grad w.r.t. h are
+                     * computed here (h = yp[L-1], identity forward); 
+                     * the gradient into the stack is written to dy[L-1]
+                     * and the output-weight grads accumulate into the
+                     * layer's grads.
+                     */
+                    NEGSAMPLE* head = m->layer[L - 1].negsample;
+                    int correct = 0;
+                    loss += negsample_loss(head,yp[L - 1],yt,
+                                           m->layer[L - 1].grads[0],
+                                           dy[L - 1],cnt,&correct);
+                    match_cnt += correct;
+                }
+                break;
             }
             model_batch_backward(m,x,dy,yp);
             if (verbose) {
@@ -442,6 +470,19 @@ void model_fit(MODEL* m,
                     case 'C':
                         v_loss += ctc_loss(m->ctc,yp[L - 1],yt,cnt,N);
                         v_match_cnt += ctc_accuracy(m->ctc,yp[L - 1],yt,cnt,N);
+                    break;
+                    case 'N': {
+                        /* Eval only: compute loss/accuracy. The grad buffers
+                         * (dy[L-1], head grads) are written but never applied,
+                         * since no model_update runs during validation.
+                         */
+                        NEGSAMPLE* head = m->layer[L - 1].negsample;
+                        int correct = 0;
+                        v_loss += negsample_loss(head,yp[L - 1],yt,
+                                                 m->layer[L - 1].grads[0],
+                                                 dy[L - 1],cnt,&correct);
+                        v_match_cnt += correct;
+                    }
                     break;
                 }
                 if (verbose) {
@@ -504,15 +545,19 @@ void model_predict(MODEL* m, const fArr2D x_, fArr2D y_, int len)
 {
     int L = m->num_layers;
     int N = m->output_dim;    /* Dimension of model output vectors */
+    /* Negative-sampling head outputs a full-vocab distribution [len][K],
+     * matching dense + softmax; all other heads output [len][output_dim].
+     */
+    int No = (m->loss_func == 'N') ? m->layer[L - 1].negsample->K : N;
     int B = m->batch_size;    /* Batch size (all layers)           */
     int D = m->input_dim;     /* Input dimension: may include bias */
     int Dx = D - (1 - m->add_bias); (void) Dx; /* Input dim excluding bias */
     int Db = D + m->add_bias; /* Input dimension including bias    */
     
     typedef float (*ArrMD)[D];
-    typedef float (*ArrMN)[N];
+    typedef float (*ArrMNo)[No];
     ArrMD x = (ArrMD) x_;
-    ArrMN y = (ArrMN) y_;
+    ArrMNo y = (ArrMNo) y_;
     
     typedef float (*VecDx);
     VecDx mean = (VecDx) m->mean;
@@ -531,7 +576,14 @@ void model_predict(MODEL* m, const fArr2D x_, fArr2D y_, int len)
         if (m->normalize)
             normalize(xb,B,Db,mean,sdev,1); 
         model_batch_forward(m,xb,yp);
-        fltcpy(y,yp[L - 1],cnt * N);
+        if (m->loss_func == 'N') {
+            /* Full-vocabulary pass, then normalize to a distribution. */
+            negsample_logits(m->layer[L - 1].negsample,yp[L - 1],
+                             (fArr2D) y,cnt);
+            softmax((fArr2D) y,cnt,No);
+        }
+        else
+            fltcpy((fArr2D) y,yp[L - 1],cnt * No);
         y += cnt;
     }
     freemem(xb);

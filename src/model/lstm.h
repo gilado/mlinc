@@ -88,7 +88,7 @@ void lstm_reset(LSTM* l);
 
 static inline void lstm_activate(fVec v, int S)
 {
-   sigmoid((fArr2D)v,1,S);
+   sigmoid((fArr2D) v,1,S);
 }
 
 /* Performs LSTM layer training/prediction's forward pass.
@@ -190,7 +190,7 @@ static inline fArr2D lstm_forward(LSTM* restrict l,
 
 static inline float lstm_d_activate(float x)
 {
-    return d_sigmoid_1(x);
+    return d_sigmoid1(x);
 }
 
 /* Performs LSTM layer training's backward pass.

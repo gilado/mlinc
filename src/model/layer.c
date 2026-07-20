@@ -11,6 +11,7 @@
 #include "dense.h"
 #include "lstm.h"
 #include "transformer.h"
+#include "negsample.h"
 #include "layer.h"
 
 /* Updates all weights in array w[M][N], according to the corresponding
@@ -45,7 +46,8 @@ int layer_init(LAYER* l, int input_dim, int batch_size)
             /* The transformer's model dimension D and sequence length T are
              * fixed at transformer_create(). input_dim must equal D, and the
              * model's row count (batch_size) must be B*T for whole sequences
-             * of length T, so the number of sequences is batch_size / T. */
+             * of length T, so the number of sequences is batch_size / T. 
+             */
             TRANSFORMER* tr = l->transformer;
             if (input_dim != tr->D) {
                 fflush(stdout);
@@ -63,6 +65,9 @@ int layer_init(LAYER* l, int input_dim, int batch_size)
             l->out = allocmem(tr->BT,tr->D,float);
             return tr->D;
         }
+        case 'n':
+            negsample_init(l->negsample,input_dim,batch_size);
+            return l->negsample->E;
     }
     layer_unsupported("layer_init",l->type);
     return 0; /* not reached */
@@ -74,6 +79,7 @@ void layer_reset(LAYER* l)
         case 'd': dense_reset(l->dense); break;
         case 'l': lstm_reset(l->lstm); break;
         case 't': /* transformer carries no cross-batch state */ break;
+        case 'n': negsample_reset(l->negsample); break;
     }
 }
 
@@ -83,6 +89,7 @@ void layer_free(LAYER* l)
         case 'd': dense_free(l->dense); break;
         case 'l': lstm_free(l->lstm); break;
         case 't': transformer_free(l->transformer); freemem(l->out); break;
+        case 'n': negsample_free(l->negsample); break;
     }
 }
 
@@ -97,6 +104,7 @@ void layer_set_batch_size(LAYER* l, int batch_size)
                 "layer_set_batch_size: not supprted by transformer layer\n");
             exit(-1);
         break;
+        case 'n': negsample_set_batch_size(l->negsample,batch_size); break;
     }
 }
 
@@ -145,7 +153,8 @@ void layer_alloc_grads(LAYER* l, char optimizer)
              *   [4]    ffn1->Wx       [D][Dff]
              *   [5]    ffn2->Wx       [Dff][D]
              *   [6..9] norm gamma/beta [D][1]
-             * Layout: g[0..9] = m, g[10..19] = v (gradients stay internal). */
+             * Layout: g[0..9] = m, g[10..19] = v (gradients stay internal). 
+             */
             TRANSFORMER* tr = l->transformer;
             int D = tr->D;
             int Dff = tr->Dff;
@@ -164,6 +173,16 @@ void layer_alloc_grads(LAYER* l, char optimizer)
                 l->grads = g;
                 l->num_grads = ng;
             }
+        }
+        break;
+        case 'n': {
+            /* Uses sparse SGD regardless of optimizer */
+            int K = l->negsample->K;
+            int E = l->negsample->E;
+            fArr2D* g = allocmem(1,1,fArr2D*);
+            g[0] = allocmem(K,E,float);
+            l->grads = g;
+            l->num_grads = 1;
         }
         break;
     }
@@ -228,7 +247,8 @@ void layer_update(LAYER* l, char optimizer,
              * buffers. For AdamW the moments live in g[0..9] (m) and
              * g[10..19] (v), in the same parameter order as the updates
              * below. Note: weight decay is applied uniformly, including to
-             * the norm gamma/beta; set weight_decay to 0 to disable. */
+             * the norm gamma/beta; set weight_decay to 0 to disable. 
+             */
             switch (optimizer) {
                 case 'l': /* linear */
                     linear_update(mha->Wq,mha->gWq,D,D,lr,wd);
@@ -256,6 +276,10 @@ void layer_update(LAYER* l, char optimizer,
                 break;
             }
         }
+        break;
+        case 'n': /* Sparse SGD over touched rows, any optimizer */
+            (void) uc;
+            negsample_update(l->negsample,g[0],lr,wd);
         break;
     }
 }

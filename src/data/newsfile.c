@@ -1,22 +1,26 @@
 /* Copyright (c) 2023-2024 Gilad Odinak */
 /* Read News Aggregator samples dataset file */
 #include <stdio.h>
+#include <string.h>
 #include <ctype.h>
 #include "mem.h"
 #include "hash.h"
 #include "newsfile.h"
 
+#define ISALPHA(c) isalpha((unsigned char) (c))
+#define TOLOWER(c) tolower((unsigned char) (c))
+
 /* Returns a pointer to the first letter (a-z A-Z) in a string, or NULL */
 static inline char* first_letter(char* s)
 {
-    while (*s != '\0' && !isalpha(*s)) s++;
+    while (*s != '\0' && !ISALPHA(*s)) s++;
     return (*s != '\0') ? s : NULL;
 }
 
-/* Returns a pointer to the first non letter in a string */
-static inline char* first_nonletter(char* s)
+/* Returns a pointer to the first letter past word end */
+static inline char* word_end(char* s)
 {
-    while (isalpha(*s)) s++;
+    while (ISALPHA(*s) || *s == '\'') s++;
     return s;
 }
 
@@ -44,11 +48,11 @@ static inline char* first_nonletter(char* s)
  *
  * Notes:
  *  - The frq field of word_freq array elements is not updated by this funciton
- *  - Only consider alphabetic character sequences, delimited by
- *    non-alphabetic characters, as words.
+ *  - Only consider alphabetic character sequences (and apostrophe), delimited
+ *    by non-alphabetic characters, as words.
  *  - Convert all alphabetic characters to lowercase before further processing.
- *    For example: "King", "king", "king's" => "king"
- *                 "Kings", "kings", "kings'" => "kings".
+ *  - Apostrophe in the middle of alphabetic character string, but not agt the 
+ *    begining or end, is considered to be part of a word.
  */
 int process_news_file(const char* file_name,
                       const char* file_dir,
@@ -56,11 +60,6 @@ int process_news_file(const char* file_name,
                       int max_vocab, WRDFRQ* word_freq,
                       int *file_words, int max_words)
 {
-    char buffer[20000];
-    int cnt;                /* Number of characters in buffer        */
-    int off = 0;            /* Location in buffer for next file read */
-    int file_word_cnt = 0;  /* Number of words in the file           */
-
     int maxpath = 512;
     char filepath[2 * maxpath];
 
@@ -90,52 +89,57 @@ int process_news_file(const char* file_name,
         return -1;
     }
 
-    for (;;) {
+    char buffer[20000];
+    int file_word_cnt = 0;  /* Number of words in the file */
+    const int max_word_len = 100;
+    for (int cnt, off = 0;;) {
         cnt = fread(buffer + off,1,sizeof(buffer) - off - 1,fp) + off;
         buffer[cnt] = '\0';
+        off = 0;
         char* w = first_letter(buffer);
         while (w != NULL) {
-            char* e = first_nonletter(w);
+            char* e = word_end(w);
             int len = e - w;
-            if (e == buffer + cnt) { /* String ends at end of buffer         */
-                if (isalpha(buffer[cnt - 1])) { /* Last char part of a word  */
-                    if (!feof(fp)) { /* Word may continue past end of buffer */
-                        memmove(buffer,w,len);
-                        off = len;
-                        break;
+            if (e == buffer + cnt) { /* Last char part of a word         */
+                if (!feof(fp)) { /* Word may continue past end of buffer */
+                    if (len <= max_word_len) {
+                        memmove(buffer,w,len); /* Discard processed data */
+                        off = len; /* Will read more data starting here  */
                     }
+                    break;
                 }
             }
-            if (len == 0) {
-                off = 0;
-                break;
-            }
-            for (int i = 0; i < len; i++)
-                w[i] = tolower(w[i]);
-            w[len] = '\0'; /* Replace non letter with end of string */
-            if (hmap != NULL) {
-                int inx = hashmap_str2inx(hmap,w,add_new);
-                if (inx >= 0 && inx < max_vocab) {
-                    if (word_freq != NULL) {
-                        word_freq[inx].inx = inx;
-                        word_freq[inx].cnt++;
-                    }
-                    if (file_words != NULL) {
-                        if (file_word_cnt < max_words)
-                            file_words[file_word_cnt] = inx;
-                        else {
-                            fprintf(stderr,
-                                "\nFile contains more than %d words\n",
-                                max_words);
-                            return file_word_cnt;
+            /* w points to a letter, e does not, so w != e (e past w)    */
+            if (*(e - 1) == '\'') e--; /* Exclude trailing apostrophe    */
+            len = e - w;
+            if (len <= max_word_len) {
+                for (int i = 0; i < len; i++)
+                    w[i] = TOLOWER(w[i]);
+                w[len] = '\0'; /* Replace non letter with end of string  */
+                if (hmap != NULL) {
+                    int inx = hashmap_str2inx(hmap,w,add_new);
+                    if (inx >= 0 && inx < max_vocab) {
+                        if (word_freq != NULL) {
+                            word_freq[inx].inx = inx;
+                            word_freq[inx].cnt++;
                         }
+                        if (file_words != NULL) {
+                            if (file_word_cnt < max_words)
+                                file_words[file_word_cnt] = inx;
+                            else {
+                                fprintf(stderr,
+                                    "\nFile contains more than %d words\n",
+                                    max_words);
+                                return file_word_cnt;
+                            }
+                        }
+                        /* Count only words that are not skipped */
+                        file_word_cnt++;
                     }
-                    /* Count only words that are not skipped */
-                    file_word_cnt++;
                 }
+                else
+                    file_word_cnt++; /* Count all words */
             }
-            else
-                file_word_cnt++; /* Count all words */
             if (e + 1 - buffer >= (int) sizeof(buffer))
                 break;
             w = first_letter(e + 1); /* Continue past end of prv string */

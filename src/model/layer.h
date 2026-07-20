@@ -6,13 +6,15 @@
 #include "dense.h"
 #include "lstm.h"
 #include "transformer.h"
+#include "negsample.h"
 
 typedef struct layer_s {
-    char type;      /* (d)ense, (l)stm, (t)ransformer           */
+    char type;      /* (d)ense (l)stm (t)ransformer (n)egsample */
     union {
         DENSE* dense;
         LSTM* lstm;
         TRANSFORMER* transformer;
+        NEGSAMPLE* negsample;
     };
     fArr2D* grads;  /* Array of gradients and adam momentums    */
     int num_grads;  /* Number of entries in grads[]             */
@@ -40,7 +42,8 @@ static inline int layer_output_dim(const LAYER* l)
     switch (l->type) {
         case 'd': return l->dense->S;
         case 'l': return l->lstm->S;
-        case 't': return l->transformer->D; /* in == out */
+        case 't': return l->transformer->D; /* in == out  */
+        case 'n': return l->negsample->E;   /* passthrout */
     }
     layer_unsupported("layer_output_dim",l->type);
     return 0; /* not reached */
@@ -53,6 +56,7 @@ static inline int layer_batch_size(const LAYER* l)
         case 'd': return l->dense->B;
         case 'l': return l->lstm->B;
         case 't': return l->transformer->BT; /* row count is B*T */
+        case 'n': return l->negsample->B;
     }
     layer_unsupported("layer_batch_size",l->type);
     return 0; /* not reached */
@@ -75,6 +79,7 @@ static inline fArr2D layer_forward(LAYER* l, const fArr2D X, int lyr)
         case 't':
             transformer_forward(l->transformer,X,NULL,l->out,lyr);
             return l->out;
+        case 'n': return negsample_forward(l->negsample,X,lyr);
     }
     layer_unsupported("layer_forward",l->type);
     return NULL; /* Not reached */
@@ -104,6 +109,9 @@ static inline void layer_backward(LAYER* l, fArr2D dy,
             return;
         case 't':
             transformer_backward(l->transformer,dy,X,dx,lyr);
+            return;
+        case 'n':
+            negsample_backward(l->negsample,dy,dx,lyr);
             return;
     }
     layer_unsupported("layer_backward",l->type);
