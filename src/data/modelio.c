@@ -9,6 +9,10 @@
 #include "denseio.h"
 #include "lstm.h"
 #include "lstmio.h"
+#include "transformer.h"
+#include "xfmrio.h"
+#include "negsample.h"
+#include "negsampio.h"
 #include "model.h"
 #include "modelio.h"
 #include "ctc.h"
@@ -28,12 +32,12 @@ MODEL* read_model(FILE* fp)
     MODEL* m = allocmem(1,1,MODEL);
     int ok;
     int cnt = fscanf(fp," MODEL num_layers %d batch_size %d input_dim %d "
-                     "add_bias %d output_dim %d loss_func '%c' optimizer '%c' "
-                     "update_cnt %d normalize %d final %d\n",
+                     "add_bias %d output_dim %d target_dim %d normalize %d "
+                     "loss_func '%c' optimizer '%c' update_cnt %d final %d\n",
                      &m->num_layers,&m->batch_size,&m->input_dim,
-                     &m->add_bias,&m->output_dim,&m->loss_func,&m->optimizer,
-                     &m->update_cnt,&m->normalize,&m->final);
-    if (cnt < 10 || cnt == EOF) {
+                     &m->add_bias,&m->output_dim,&m->target_dim,&m->normalize,
+                     &m->loss_func,&m->optimizer,&m->update_cnt,&m->final);
+    if (cnt < 11 || cnt == EOF) {
         fprintf(stderr,"In read_model: failed to read the header\n");
         goto err;
     }
@@ -78,6 +82,14 @@ MODEL* read_model(FILE* fp)
                 l->lstm = read_lstm(fp); 
                 ok = (l->lstm != NULL);
             break;
+            case 't':
+                l->transformer = read_transformer(fp);
+                ok = (l->transformer != NULL);
+            break;
+            case 'n':
+                l->negsample = read_negsample(fp);
+                ok = (l->negsample != NULL);
+            break;
         }
         if (!ok) {
             fprintf(stderr,
@@ -104,6 +116,29 @@ MODEL* read_model(FILE* fp)
                         ok = read_array(l->grads[j],rows,l->lstm->S,fp,0);
                     }
                 break;
+                case 't': /* transformer layer gradients (adamw m/v moments) */
+                {
+                    int D = l->transformer->D;
+                    int Dff = l->transformer->Dff;
+                    int gr[10] = { D, D, D, D, D,   Dff, D, D, D, D };
+                    int gc[10] = { D, D, D, D, Dff, D,   1, 1, 1, 1 };
+                    for (int j = 0; j < l->num_grads && ok; j++) {
+                        int k = j % 10;
+                        l->grads[j] = allocmem(gr[k],gc[k],float);
+                        ok = read_array(l->grads[j],gr[k],gc[k],fp,0);
+                    }
+                }
+                break;
+                case 'n': /* negsample layer gradient */
+                {
+                    int K = l->negsample->K;
+                    int E = l->negsample->E;
+                    for (int j = 0; j < l->num_grads && ok; j++) {
+                        l->grads[j] = allocmem(K,E,float);
+                        ok = read_array(l->grads[j],K,E,fp,0);
+                    }
+                }
+                break;
             }
             if (!ok) {
                 fprintf(stderr,"In read_model: "
@@ -112,6 +147,7 @@ MODEL* read_model(FILE* fp)
             }
         }
     }
+    m->compiled = 1;
     return m;
 err: /* error return */
     fflush(stderr);
@@ -124,21 +160,26 @@ err: /* error return */
  * Writes the model pointed to by m to the file pointed to by fp. 
  * 
  * Parameters:
- *   m  - Pointer to the model to be written
- *   fp - Pointer to a FILE object representing the output file
+ *   m     - Pointer to the model to be written
+ *   final - If not zero, store the model as final: gradient/optimizer
+ *           state is omitted (the file records num_grads 0 for every
+ *           layer) so the model can be loaded for inference but not
+ *           further trained. The model m itself is not modified.
+ *   fp    - Pointer to a FILE object representing the output file
  * 
  * Returns:
  *   1 if successful, 0 otherwise
  */
-int write_model(const MODEL* m, FILE* fp)
+int write_model(const MODEL* m, int final, FILE* fp)
 {
     int ok;
+    int fin = (final || m->final) ? 1 : 0;
     int cnt = fprintf(fp,"MODEL num_layers %d batch_size %d input_dim %d "
-                 "add_bias %d output_dim %d loss_func '%c' optimizer '%c' " 
-                 "update_cnt %d normalize %d final %d\n",
+                 "add_bias %d output_dim %d target_dim %d normalize %d " 
+                 "loss_func '%c' optimizer '%c' update_cnt %d final %d\n",
                  m->num_layers,m->batch_size,m->input_dim,
-                 m->add_bias,m->output_dim,m->loss_func,m->optimizer,
-                 m->update_cnt,m->normalize,m->final);
+                 m->add_bias,m->output_dim,m->target_dim,m->normalize,
+                 m->loss_func,m->optimizer,m->update_cnt,fin);
     if (cnt <= 0 || cnt == EOF) {
         fprintf(stderr,"In write_model: failed to write the header\n");
         return 0;
@@ -164,8 +205,8 @@ int write_model(const MODEL* m, FILE* fp)
     }
     for (int i = 0; i < m->num_layers; i++) {
         LAYER* l = &m->layer[i];
-        cnt = fprintf(fp,
-                      "LAYER type '%c' num_grads %d\n",l->type,l->num_grads);
+        int num_grads = fin ? 0 : l->num_grads;
+        cnt = fprintf(fp,"LAYER type '%c' num_grads %d\n",l->type,num_grads);
         if (cnt <= 0 || cnt == EOF) {
             fprintf(stderr,
                     "In write_model: failed to write layer %d header\n",i);
@@ -174,13 +215,15 @@ int write_model(const MODEL* m, FILE* fp)
         switch (l->type) {
             case 'd': ok = write_dense(l->dense,fp); break;
             case 'l': ok = write_lstm(l->lstm,fp); break;
+            case 't': ok = write_transformer(l->transformer,fin,fp); break;
+            case 'n': ok = write_negsample(l->negsample,fp); break;
         }
         if (!ok) {
             fprintf(stderr,
                     "In write_model: failed to write layer %d data\n",i);
             return 0;
         }
-        if (l->num_grads > 0 && l->grads != NULL) {
+        if (num_grads > 0 && l->grads != NULL) {
             /* grads is an array of pointers to arrays 
              * see model_compile() for layout
              */
@@ -197,6 +240,26 @@ int write_model(const MODEL* m, FILE* fp)
                         int rows = ((j / 4) % 2) ? l->lstm->S : l->lstm->D;
                         ok = write_array(l->grads[j],rows,l->lstm->S,fp,NULL,0);
                     }
+                break;
+                case 't': /* transformer layer gradients (adamw m/v moments) */
+                {
+                    int D = l->transformer->D;
+                    int Dff = l->transformer->Dff;
+                    int gr[10] = { D, D, D, D, D,   Dff, D, D, D, D };
+                    int gc[10] = { D, D, D, D, Dff, D,   1, 1, 1, 1 };
+                    for (int j = 0; j < l->num_grads && ok; j++) {
+                        int k = j % 10;
+                        ok = write_array(l->grads[j],gr[k],gc[k],fp,NULL,0);
+                    }
+                }
+                break;
+                case 'n': /* negsample layer gradient */
+                {
+                    int K = l->negsample->K;
+                    int E = l->negsample->E;
+                    for (int j = 0; j < l->num_grads && ok; j++)
+                        ok = write_array(l->grads[j],K,E,fp,NULL,0);
+                }
                 break;
             }
             if (!ok) {
@@ -251,7 +314,7 @@ int store_model(const MODEL* m, const char* filename)
         fprintf(stderr,"In store_model: failed to open file '%s' for write\n",filename);
         return 0;
     }
-    int ok = write_model(m,fp);
+    int ok = write_model(m,m->final,fp);
     fclose(fp);
     return ok;
 }

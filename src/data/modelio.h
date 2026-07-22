@@ -22,13 +22,17 @@ MODEL* read_model(FILE* fp);
  * Writes the model pointed to by m to the file pointed to by fp. 
  * 
  * Parameters:
- *   m  - Pointer to the model to be written
- *   fp - Pointer to a FILE object representing the output file
+ *   m     - Pointer to the model to be written
+ *   final - If not zero, store the model as final: gradient/optimizer
+ *           state is omitted (the file records num_grads 0 for every
+ *           layer) so the model can be loaded for inference but not
+ *           further trained. The model m itself is not modified.
+ *   fp    - Pointer to a FILE object representing the output file
  * 
  * Returns:
  *   1 if successful, 0 otherwise
  */
-int write_model(const MODEL* m, FILE* fp);
+int write_model(const MODEL* m, int final, FILE* fp);
 
 /* load_model - Load a model from a file
  * 

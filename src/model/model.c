@@ -65,6 +65,7 @@ MODEL* model_create(int num_layers,
     m->input_dim = input_dim;
     m->add_bias = (add_bias) ? 1 : 0;
     m->normalize = (normalize) ? 1 : 0;
+    m->compiled = 0;
     m->final = 0;
     return m;
 }
@@ -130,29 +131,35 @@ void model_add(MODEL* m, void* layer, const char* type)
 
 /* Prepares model for training.
  *
- * loss_func can be one of mean-square-error cross-entropy ctc
+ * loss_func can be one of mean-square-error cross-entropy ctc negative-sampling
  *
- * optimizer can be one of (l)inear (a)damw
+ * optimizer can be one of linear, adamw
  *
  * both optimizers incorporate weight decay; to disable, set it to 0 when
  * invoking model_fit().
  */
 void model_compile(MODEL* m, const char* loss_func, const char* optimizer)
 {
+    if (m->compiled) {
+        fflush(stdout);
+        fprintf(stderr,"model_compile: model already compiled\n");
+        exit(-1);
+        return;
+    }
     if (!strcasecmp("mean-square-error",loss_func)) m->loss_func = 'm';
     if (!strcasecmp("cross-entropy",loss_func)) m->loss_func = 'c';
     if (!strcasecmp("ctc",loss_func)) m->loss_func = 'C';
     if (!strcasecmp("negative-sampling",loss_func)) m->loss_func = 'N';
     if (m->loss_func == 0) {
         fflush(stdout);
-        fprintf(stderr,"model_create: invalid loss function '%s'\n",loss_func);
+        fprintf(stderr,"model_compile: invalid loss function '%s'\n",loss_func);
         exit(-1);
     }
     if (!strcasecmp("linear",optimizer)) m->optimizer = 'l';
     if (!strcasecmp("adamw",optimizer)) m->optimizer = 'a';
     if (m->optimizer == 0) {
         fflush(stdout);
-        fprintf(stderr,"model_create: invalid optimizer '%s'\n",optimizer);
+        fprintf(stderr,"model_compile: invalid optimizer '%s'\n",optimizer);
         exit(-1);
     }
     if (m->num_layers < 1) {
@@ -160,7 +167,7 @@ void model_compile(MODEL* m, const char* loss_func, const char* optimizer)
         fprintf(stderr,"model_compile: model does not have any layers\n");
         exit(-1);
     }
-
+    m->compiled = 1;
     if (m->normalize) {
         int D = m->input_dim;           /* Input dimension: may include bias */
         int Dx = D - (1 - m->add_bias); /* Input dimension excluding bias    */
@@ -172,8 +179,9 @@ void model_compile(MODEL* m, const char* loss_func, const char* optimizer)
     int B = m->batch_size;
     int L = m->num_layers;
     for (int i = 0; i < L; i++) {
-        /* layer_init returns the layer's output size, which is the
-         * input size of the next layer. */
+        /* layer_init returns the layer's output size,
+         * which is the input size of the next layer.
+         */
         D = layer_init(&m->layer[i],D,B);
     }
     m->output_dim = layer_output_dim(&m->layer[L - 1]);
@@ -294,6 +302,12 @@ void model_fit(MODEL* m,
     float* v_losses, float* v_accuracies,
     const char* kwargs)
 {
+    if (m->final) {
+        fflush(stdout);
+        fprintf(stderr,"model_fit: final model cannot be trained\n");
+        exit(-1);
+        return;
+    }
     int verbose = 0; get_kw_int(kwargs,"verbose",&verbose);
     int shuffle = 1; get_kw_int(kwargs,"shuffle",&shuffle);
     int final = 0;   get_kw_int(kwargs,"final",&final);

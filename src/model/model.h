@@ -24,6 +24,7 @@ typedef struct model_s {
     int normalize;  /* If not zero, normalize input data          */
     fVec mean;      /* For input normalization                    */
     fVec sdev;      /* For input normalization                    */
+    int compiled;   /* If not zero, it is already compiled        */
     int final;      /* If zero, can be further trained            */
 } MODEL;
 
@@ -60,9 +61,9 @@ void model_add(MODEL* m, void* layer, const char* type);
 
 /* Prepares model for training. 
  *
- * loss_func can be one of mean-square-error cross-entropy ctc
+ * loss_func can be one of mean-square-error cross-entropy ctc negative-sampling
  *
- * optimizer can be one of (l)inear (a)damw
+ * optimizer can be one of linear (a)damw
  *
  * both optimizers incorporate weight decay; to disable, set it to 0 when
  * invoking model_fit().

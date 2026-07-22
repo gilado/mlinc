@@ -22,13 +22,13 @@ LSTM* read_lstm(FILE* fp);
  * Writes the LSTM layer pointed to by d to the file pointed to by fp. 
  * 
  * Parameters:
- *   d  - Pointer to the LSTM layer to be written
+ *   l  - Pointer to the LSTM layer to be written
  *   fp - Pointer to a FILE object representing the output file
  * 
  * Returns:
  *   1 if successful, 0 otherwise
  */
-int write_lstm(const LSTM* d, FILE* fp);
+int write_lstm(const LSTM* l, FILE* fp);
 
 /* load_lstm - Load an LSTM layer from a file
  * 
@@ -49,12 +49,12 @@ LSTM* load_lstm(const char* filename);
  * stores the LSTM layer pointed to by d into it.
  * 
  * Parameters:
- *   d        - Pointer to the LSTM layer to be stored
+ *   l        - Pointer to the LSTM layer to be stored
  *   filename - Name of the file to store the LSTM layer in
  * 
  * Returns:
  *   1 if successful, 0 otherwise
  */
-int store_lstm(const LSTM* d, const char* filename);
+int store_lstm(const LSTM* l, const char* filename);
 
 #endif

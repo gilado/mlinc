@@ -104,7 +104,7 @@ err: /* error exit */
  * Writes the LSTM layer pointed to by d to the file pointed to by fp. 
  * 
  * Parameters:
- *   d  - Pointer to the LSTM layer to be written
+ *   l  - Pointer to the LSTM layer to be written
  *   fp - Pointer to a FILE object representing the output file
  * 
  * Returns:
@@ -180,7 +180,7 @@ LSTM* load_lstm(const char* filename)
  * stores the LSTM layer pointed to by d into it.
  * 
  * Parameters:
- *   d        - Pointer to the LSTM layer to be stored
+ *   l        - Pointer to the LSTM layer to be stored
  *   filename - Name of the file to store the LSTM layer in
  * 
  * Returns:
@@ -197,4 +197,3 @@ int store_lstm(const LSTM* l, const char* filename)
     fclose(fp);
     return ok;
 }
-
