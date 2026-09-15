@@ -8,6 +8,7 @@
 #ifndef MHA_H
 #define MHA_H
 #include "float.h"
+#include "mem.h"
 #include "array.h"
 #include "activation.h"
 #include "dropout.h"

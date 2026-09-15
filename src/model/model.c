@@ -335,10 +335,10 @@ void model_fit(MODEL* m,
     if (m->normalize)
         calculate_mean_sdev(xTr,MTr,D,mean,sdev,0);
 
-    BATCH* bTr = batch_create(xTr,D,yTr,Nt,B,lenTr,numTr,shuffle,0);
+    BATCH* bTr = batch_create(xTr,D,yTr,Nt,B,lenTr,numTr,shuffle);
     BATCH* bVd = NULL;
     if (MVd > 0) /* Notice validation data not shuffled */
-        bVd = batch_create(xVd,D,yVd,Nt,B,lenVd,numVd,0,0);
+        bVd = batch_create(xVd,D,yVd,Nt,B,lenVd,numVd,0);
         
     fArr2D dy[L];  /* Gradients with respect to the inputs          */
     for (int i = 0; i < L; i++)
@@ -566,7 +566,7 @@ void model_predict(MODEL* m, const fArr2D x_, fArr2D y_, int len)
     typedef float (*ArrBD)[D];
     ArrBD xb = (ArrBD) allocmem(B,D,float);    /* Array of samples      */
 
-    BATCH* b = batch_create(x,D,NULL,0,B,NULL,len,0,0);
+    BATCH* b = batch_create(x,D,NULL,0,B,NULL,len,0);
     reset_state(m);
     for (;;) {
         fArr2D yp[L]; /* Pointers to layers' prediction arrays */
